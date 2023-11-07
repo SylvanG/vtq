@@ -37,6 +37,15 @@ class Task(BaseModel):
     priority = peewee.SmallIntegerField(default=50)
 
 
+class TaskError(BaseModel):
+    task = peewee.ForeignKeyField(Task, backref="errors")
+    happened_at = CurrrentMilliTimeStampField()
+    err_msg = peewee.CharField(max_length=80 * 100)
+
+    class Meta:
+        primary_key = peewee.CompositeKey("task", "happened_at")
+
+
 def get_sqlite_database(name: str = "vtq.db"):
     # https://docs.peewee-orm.com/en/latest/peewee/database.html#recommended-settings
     pragmas = {
@@ -56,45 +65,72 @@ def generate_model_class[M: type[BaseModel]](
     database: peewee.Database | None = None,
 ) -> M:
     cls_name_prefix = "".join(map(str.capitalize, workspace.split("_")))
-    cls = type(cls_name_prefix + model_class.__name__, (model_class,), attrs or {})
+    attrs = attrs or {}
+
+    # class Meta:
+    #     without_rowid = True
+
+    # attrs["Meta"] = Meta
+    cls = type(cls_name_prefix + model_class.__name__, (model_class,), attrs)
     if database:
         database.bind([cls])
     return cls
 
 
-def generate_model_classes(
-    workspace: str = "default", database: peewee.Database | None = None
-) -> tuple[type[Task], type[VirtualQueue]]:
-    database = database or get_sqlite_database()
+class ModelClsFactory:
+    def __init__(
+        self, workspace: str = "default", database: peewee.Database | None = None
+    ):
+        self._workspace = workspace
+        self._database = database or get_sqlite_database()
 
-    GeneratedVirtualQueue = generate_model_class(
-        VirtualQueue, workspace=workspace, database=db
-    )
-    attrs = {
-        "vqueue": peewee.ForeignKeyField(
-            GeneratedVirtualQueue, column_name="vqueue_name", backref="tasks"
+    def _generate_cls[M: type[BaseModel]](
+        self, model: M, attrs: dict | None = None
+    ) -> M:
+        return generate_model_class(
+            model, attrs=attrs, workspace=self._workspace, database=self._database
         )
-    }
-    GeneratedTask = generate_model_class(
-        Task, attrs=attrs, workspace=workspace, database=db
-    )
-    return GeneratedTask, GeneratedVirtualQueue
+
+    def generate_virtual_queue_cls(self) -> type[VirtualQueue]:
+        return self._generate_cls(VirtualQueue)
+
+    def generate_task_cls(self, virtual_queue_cls: type[VirtualQueue]) -> type[Task]:
+        attrs = {
+            "vqueue": peewee.ForeignKeyField(
+                virtual_queue_cls, column_name="vqueue_name", backref="tasks"
+            )
+        }
+        return self._generate_cls(Task, attrs=attrs)
+
+    def generate_task_error_cls(self, task_cls: type[Task]) -> type[TaskError]:
+        attrs = {"task": peewee.ForeignKeyField(task_cls, backref="errors")}
+        return self._generate_cls(TaskError, attrs=attrs)
 
 
-if __name__ == "__main__":
+def enable_debug_logging(disable_handler=False):
     import logging
 
     peewee.logger.setLevel(logging.DEBUG)
-    peewee.logger.addHandler(logging.StreamHandler())
+    if not disable_handler:
+        peewee.logger.addHandler(logging.StreamHandler())
+
+
+if __name__ == "__main__":
+    enable_debug_logging()
 
     db = get_sqlite_database()
-    DefaultTask, DefaultVirtualQueue = generate_model_classes(database=db)
+    cls_factory = ModelClsFactory(database=db)
+    DefaultVirtualQueue = cls_factory.generate_virtual_queue_cls()
+    DefaultTask = cls_factory.generate_task_cls(DefaultVirtualQueue)
+    DefaultTaskError = cls_factory.generate_task_error_cls(DefaultTask)
 
     with db:
-        db.drop_tables([DefaultTask, DefaultVirtualQueue])
-        db.create_tables([DefaultTask, DefaultVirtualQueue])
+        db.drop_tables([DefaultTask, DefaultVirtualQueue, DefaultTaskError])
+        db.create_tables([DefaultTask, DefaultVirtualQueue, DefaultTaskError])
         vq = DefaultVirtualQueue.create(name="test_vq")
         task = DefaultTask.create(data=b"123", vqueue=vq)
 
         t: Task = DefaultTask.select().get()
         print(t.id, t.visible_at, t.queued_at, t.started_at)
+        print(t.vqueue)
+        print(t.errors)
