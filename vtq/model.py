@@ -21,6 +21,7 @@ class VirtualQueue(BaseModel):
     bucket_name = peewee.CharField(default="")
     bucket_weight = peewee.IntegerField(default=100)
     visibility_timeout = peewee.IntegerField(default=86400)
+    hidden = peewee.BooleanField(default=False)
 
 
 class Task(BaseModel):
@@ -33,7 +34,7 @@ class Task(BaseModel):
     visible_at = InitMilliTimeStampField()
     status = peewee.SmallIntegerField(default=0)
     started_at = InitMilliTimeStampField()
-    completed_at = InitMilliTimeStampField()
+    ended_at = InitMilliTimeStampField()
     priority = peewee.SmallIntegerField(default=50)
 
 
@@ -127,7 +128,7 @@ if __name__ == "__main__":
     with db:
         db.drop_tables([DefaultTask, DefaultVirtualQueue, DefaultTaskError])
         db.create_tables([DefaultTask, DefaultVirtualQueue, DefaultTaskError])
-        vq = DefaultVirtualQueue.create(name="test_vq")
+        vq = DefaultVirtualQueue.create(name="test_vq", priority=70)
         task = DefaultTask.create(data=b"123", vqueue=vq)
 
         t: Task = DefaultTask.select().get()
