@@ -1,6 +1,6 @@
 import abc
 from abc import abstractmethod
-from task import Task
+from vtq.task import Task
 
 
 class TaskQueue(abc.ABC):
@@ -32,7 +32,7 @@ class TaskQueue(abc.ABC):
     def ack(self, task_id: str) -> bool:
         """Marks the task as completed successfully
 
-        Returns: if the task_id exists and the task is marked as completed, returns True
+        Returns: if the task_id exists and the task is marked as completed, returns True. If the task is not working in process or it is failed permanently, the ack operation will fail to update it as completed.
         """
         pass
 
@@ -40,12 +40,28 @@ class TaskQueue(abc.ABC):
     def nack(self, task_id: str, error_messsage: str) -> bool:
         """Marks the task as failed.
 
-        Returns: if the task_id exists and the task is marked as failed with error_message set, returns True.
+        Returns: if the task_id exists and the task is marked as failed, returns True. If the task is not working in process or it is compeleted successfully, the ack operation will fail to update it as failed.
         """
         pass
 
     @abstractmethod
     def requeue(self, task_id: str) -> bool:
+        """Requeue the task when give back the prefetched task. This will mark the task with the idle status.
+
+        Returns:
+        If the task is already ended or in retry, then the operation will failed.
+        """
+        pass
+
+    @abstractmethod
+    def retry(
+        self, task_id: str, delayMillis: int = 0, error_message: str = ""
+    ) -> bool:
+        """Requeue retry-able task. This will mark the task with retry status.
+
+        Returns:
+        If the task is already eneded or in idle, then the operation will failed.
+        """
         pass
 
     @abstractmethod
