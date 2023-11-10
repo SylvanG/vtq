@@ -1,12 +1,13 @@
 import unittest
 import time
-from vtq import coordinator
+from vtq import workspace
 
 
 class CoordinatorTestCase(unittest.TestCase):
     def setUp(self):
-        self.coordinator = coordinator.Coordinator()
-        self.db = self.coordinator._db
+        ws = workspace.DefaultWorkspace()
+        self.db = ws.database
+        self.coordinator = ws.coordinator
         self.vq_cls = self.coordinator._vq_cls
         self.task_cls = self.coordinator._task_cls
 
