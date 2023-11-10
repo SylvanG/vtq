@@ -15,15 +15,22 @@ _INVISIBLE_TIMESTAMP_SECONDS = 2**31 - 1
 
 
 class Coordinator(task_queue.TaskQueue):
-    def __init__(self, workspace: str = "default"):
-        self._db = model.get_sqlite_database()
-        cls_factory = model.ModelClsFactory(workspace=workspace, database=self._db)
-        self._vq_cls = cls_factory.generate_virtual_queue_cls()
-        self._task_cls = cls_factory.generate_task_cls(self._vq_cls)
-        self._task_error_cls = cls_factory.generate_task_error_cls(self._task_cls)
+    def __init__(
+        self,
+        database: peewee.Database,
+        virtual_queue_cls: type[model.VirtualQueue],
+        task_cls: type[model.Task],
+        task_error_cls: type[model.TaskError],
+        config_fetcher: configuration.ConfigurationFetcher,
+        channel: channel.Channel | None = None,
+    ):
+        self._db = database
+        self._vq_cls = virtual_queue_cls
+        self._task_cls = task_cls
+        self._task_error_cls = task_error_cls
 
-        self._channel = channel.Channel()
-        self._config_fetcher = configuration.ConfigurationFetcher(workspace=workspace)
+        self._channel = channel
+        self._config_fetcher = config_fetcher
 
     def enqueue(
         self,
@@ -51,7 +58,9 @@ class Coordinator(task_queue.TaskQueue):
                 task = self._enqueue_task_with_new_vq(
                     task_data, vqueue_name, priority, visible_at
                 )
-        self._channel.send(task.id)
+
+        if self._channel:
+            self._channel.send(task.id)
         return task.id
 
     def _enqueue_task_with_new_vq(
@@ -82,7 +91,7 @@ class Coordinator(task_queue.TaskQueue):
             if not task:
                 if tasks or wait_time_seconds <= 0:
                     return tasks
-                # block to wait at most `wait_time_seconds`
+                # TODO: block to wait at most `wait_time_seconds`
                 raise NotImplementedError
             tasks.append(task)
 
@@ -123,8 +132,10 @@ class Coordinator(task_queue.TaskQueue):
                     task_cls.id,
                     task_cls.data,
                     task_cls.vqueue_name,
-                    task_cls.priority,  # for debug
-                    vq_cls.visibility_timeout.alias("vq_visibility_timeout"),
+                    task_cls.priority,  # TODO: for debug, remove it later
+                    task_cls.updated_at,
+                    vq_cls.updated_at.alias("vqueue_updated_at"),
+                    vq_cls.visibility_timeout.alias("vqueue_visibility_timeout"),
                 )
                 .order_by(
                     self._task_cls.priority.desc(), self._task_cls.queued_at.asc()
@@ -137,25 +148,36 @@ class Coordinator(task_queue.TaskQueue):
                 return
             print(task.id, task.vqueue_name, task.priority)
 
+        self._update_task_and_vq(task)
+        return Task(task.id, task.data)
+
+    def _update_task_and_vq(self, task):
+        task_cls = self._task_cls
+        vq_cls = self._vq_cls
+
         # TODO: check rate limit
 
-        # Update task status and virtual queue status
-        # TODO: check task.vqueue_name & task.update_at & vq.update_at
         with self._db:
             with self._db.atomic():
-                vq_query = vq_cls.select(vq_cls.name).where(
-                    ~vq_cls.hidden & (vq_cls.name == task.vqueue_name)
+                current_ts = time.time()
+                vqueue_subquery = vq_cls.select(vq_cls.name).where(
+                    (vq_cls.name == task.vqueue_name)
+                    & (vq_cls.updated_at == task.vqueue_updated_at)
+                    # & ~vq_cls.hidden
                 )
                 task_cls.update(
-                    status=50, visible_at=task.vq_visibility_timeout + current_ts
+                    status=50,
+                    visible_at=task.vqueue_visibility_timeout + current_ts,
+                    updated_at=current_ts,
                 ).where(
-                    (task_cls.vqueue_name == vq_query)
-                    & (task_cls.id == task.id)
-                    & (task_cls.status < 10)
-                    & (task_cls.visible_at <= current_ts)
+                    (task_cls.id == task.id)
+                    & (task_cls.vqueue_name == vqueue_subquery)
+                    & (task_cls.updated_at == task.updated_at)
+                    # & (task_cls.status < 10)
+                    # & (task_cls.visible_at <= current_ts)
                 ).execute()
+
                 # TODO: update VQ hidden according to Rate limit policy
-        return Task(task.id, task.data)
 
     def _get_task_only_status(self, task_id) -> model.Task | None:
         task: model.Task | None = (
@@ -176,9 +198,11 @@ class Coordinator(task_queue.TaskQueue):
                 return False
 
             # TODO: change to conditional atomic update, using where clause with update
+            current_ts = time.time()
             task.status = 100
             task.visible_at = _INVISIBLE_TIMESTAMP_SECONDS
-            task.ended_at = time.time()
+            task.ended_at = current_ts
+            task.updated_at = current_ts
             task.save()
         return True
 
@@ -198,6 +222,7 @@ class Coordinator(task_queue.TaskQueue):
                 task.status = 101
                 task.visible_at = _INVISIBLE_TIMESTAMP_SECONDS
                 task.ended_at = current_ts
+                task.updated_at = current_ts
                 task.save()
                 if error_messsage:
                     self._task_error_cls.create(
@@ -217,14 +242,36 @@ class Coordinator(task_queue.TaskQueue):
             if not task.is_wip():
                 return False
 
-            # TODO
+            # TODO: change to conditional atomic update, using where clause with update
+            current_ts = time.time()
+            task.status = 0
+            task.visible_at = 0
+            task.updated_at = current_ts
+            task.save()
+        return True
 
     def retry(
-        self, task_id: str, delayMillis: int = 0, error_message: str = ""
+        self, task_id: str, delay_millis: int = 0, error_message: str = ""
     ) -> bool:
-        return super().retry(task_id, delayMillis, error_message)
+        with self._db:
+            task = self._get_task_only_status(task_id)
+            if not task:
+                return False
+            if task.is_pending():
+                return True
+            if not task.is_wip():
+                return False
 
-    def __len__(self):
+            # TODO: change to conditional atomic update, using where clause with update
+            current_ts = time.time()
+            visible_at = current_ts + delay_millis / 1000.0 if delay_millis else 0
+            task.status = 1
+            task.visible_at = visible_at
+            task.updated_at = current_ts
+            task.save()
+        return True
+
+    def __len__(self) -> int:
         return super().__len__()
 
     def delete(self, task_id: str):
