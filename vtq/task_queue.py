@@ -7,6 +7,8 @@ class TaskQueue(abc.ABC):
     """
     This is the interface for the TaskQueue, it will be implement in two ways.
     One is library-based, and the other is service-based (gPRC).
+
+    TaskQueue implementation should be thread-safe.
     """
 
     @abstractmethod
