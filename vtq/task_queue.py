@@ -37,7 +37,7 @@ class TaskQueue(abc.ABC):
         pass
 
     @abstractmethod
-    def nack(self, task_id: str, error_messsage: str) -> bool:
+    def nack(self, task_id: str, error_message: str) -> bool:
         """Marks the task as failed.
 
         Returns: if the task_id exists and the task is marked as failed, returns True. If the task is not working in process or it is compeleted successfully, the ack operation will fail to update it as failed.
@@ -49,7 +49,7 @@ class TaskQueue(abc.ABC):
         """Requeue the task when give back the prefetched task. This will mark the task with the idle status.
 
         Returns:
-        If the task is already ended or in retry, then the operation will failed.
+        If the task is already ended or in retry, then the operation will fail.
         """
         pass
 

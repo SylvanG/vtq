@@ -1,5 +1,6 @@
 import unittest
 import time
+import uuid
 from vtq import workspace
 
 
@@ -10,13 +11,15 @@ class CoordinatorTestCase(unittest.TestCase):
         self.coordinator = ws.coordinator
         self.vq_cls = self.coordinator._vq_cls
         self.task_cls = self.coordinator._task_cls
+        self.task_error_cls = self.coordinator._task_error_cls
 
         # clear tables
         with self.db:
+            self.task_error_cls.truncate_table()
             self.task_cls.truncate_table()
             self.vq_cls.truncate_table()
 
-    def _enable_model_debug_logging():
+    def _enable_model_debug_logging(self):
         from vtq import model
 
         model.enable_debug_logging()
@@ -41,6 +44,19 @@ class CoordinatorTestCase(unittest.TestCase):
 
     def _get_ids(self, tasks):
         return list(map(lambda t: t.id, tasks))
+
+    def _new_task_id(self):
+        return uuid.uuid4()
+
+    def _get_task_model(self, task_id):
+        with self.db:
+            task_models = (
+                self.task_cls.select(self.task_cls)
+                .where(self.task_cls.id == task_id)
+                .prefetch(self.task_error_cls)
+            )
+            assert len(task_models) <= 1
+            return task_models[0] if task_models else None
 
     def test_receive_check_task_visible_at(self):
         vq = self._add_vq()
@@ -130,3 +146,133 @@ class CoordinatorTestCase(unittest.TestCase):
     @unittest.skip
     def test_receive_vq_bucket(self):
         pass
+
+    def test_ack(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.ack(task.id)
+        assert rv is True
+        assert not self.coordinator.receive(max_number=1)
+
+    def test_ack_idempotent(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.ack(task.id)
+        assert rv is True
+        rv = self.coordinator.ack(task.id)
+        assert rv is True
+
+    def test_ack_non_exist_task(self):
+        rv = self.coordinator.ack(self._new_task_id())
+        assert rv is False
+
+    def test_ack_non_wip_task(self):
+        vq = self._add_vq()
+        task_id = vq.add_task()
+        rv = self.coordinator.ack(task_id)
+        assert rv is False
+
+    def test_nack(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.nack(task.id, "network error")
+        assert rv is True
+        assert not self.coordinator.receive(max_number=1)
+
+    def test_nack_idempotent(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.nack(task.id, "network error")
+        assert rv is True
+        rv = self.coordinator.nack(task.id, "network error")
+        assert rv is True
+        rv = self.coordinator.nack(task.id, "network error 2")
+        assert rv is True
+
+    def test_nack_non_exist_task(self):
+        rv = self.coordinator.nack(self._new_task_id(), error_message="network error")
+        assert rv is False
+
+    def test_nack_non_wip_task(self):
+        vq = self._add_vq()
+        task_id = vq.add_task()
+        rv = self.coordinator.nack(task_id, error_message="network error")
+        assert rv is False
+
+    def test_requeue(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.requeue(task.id)
+        assert rv is True
+        assert self.coordinator.receive(max_number=1)[0].id == task.id
+
+    def test_requeue_idempotent(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.requeue(task.id)
+        assert rv is True
+        rv = self.coordinator.requeue(task.id)
+        assert rv is True
+
+    def test_requeue_non_exist_task(self):
+        rv = self.coordinator.requeue(self._new_task_id())
+        assert rv is False
+
+    def test_retry(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.retry(task.id)
+        assert rv is True
+        assert self.coordinator.receive(max_number=1)[0].id == task.id
+
+    def test_retry_with_delay(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.retry(task.id, delay_millis=1000)
+        assert rv is True
+        assert not self.coordinator.receive(max_number=1)
+
+    def test_retry_with_error_message(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.retry(task.id, error_message="network error")
+        assert rv is True
+        assert self.coordinator.receive(max_number=1)[0].id == task.id
+
+        task_model = self._get_task_model(task.id)
+        assert len(task_model.errors) == 1
+        assert task_model.errors[0].err_msg == "network error"
+
+    def test_retry_idempotent(self):
+        vq = self._add_vq()
+        vq.add_task()
+        task = self.coordinator.receive(max_number=1)[0]
+
+        rv = self.coordinator.retry(task.id, delay_millis=1000)
+        assert rv is True
+        rv = self.coordinator.retry(task.id, delay_millis=1000)
+        assert rv is True
+        rv = self.coordinator.retry(task.id, delay_millis=2000)
+        assert rv is True
+
+    def test_retry_non_exist_task(self):
+        rv = self.coordinator.retry(self._new_task_id())
+        assert rv is False

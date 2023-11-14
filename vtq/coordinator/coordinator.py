@@ -206,7 +206,7 @@ class Coordinator(task_queue.TaskQueue):
             task.save()
         return True
 
-    def nack(self, task_id: str, error_messsage: str) -> bool:
+    def nack(self, task_id: str, error_message: str) -> bool:
         with self._db:
             task = self._get_task_only_status(task_id)
             if not task:
@@ -224,10 +224,10 @@ class Coordinator(task_queue.TaskQueue):
                 task.ended_at = current_ts
                 task.updated_at = current_ts
                 task.save()
-                if error_messsage:
+                if error_message:
                     self._task_error_cls.create(
                         task_id=task.id,
-                        error_messsage=error_messsage,
+                        err_msg=error_message,
                         happended_at=current_ts,
                     )
         return True
@@ -263,12 +263,19 @@ class Coordinator(task_queue.TaskQueue):
                 return False
 
             # TODO: change to conditional atomic update, using where clause with update
-            current_ts = time.time()
-            visible_at = current_ts + delay_millis / 1000.0 if delay_millis else 0
-            task.status = 1
-            task.visible_at = visible_at
-            task.updated_at = current_ts
-            task.save()
+            with self._db.atomic():
+                current_ts = time.time()
+                visible_at = current_ts + delay_millis / 1000.0 if delay_millis else 0
+                task.status = 1
+                task.visible_at = visible_at
+                task.updated_at = current_ts
+                task.save()
+                if error_message:
+                    self._task_error_cls.create(
+                        task_id=task.id,
+                        err_msg=error_message,
+                        happended_at=current_ts,
+                    )
         return True
 
     def __len__(self) -> int:
