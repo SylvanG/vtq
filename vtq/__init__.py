@@ -1,5 +1,5 @@
-from task_queue import TaskQueue
-from task import Task
-from coordinator import Coordinator
+from vtq.task_queue import TaskQueue
+from vtq.task import Task
+from vtq.coordinator import Coordinator
 
 __all__ = ["TaskQueue", "Task", "Coordinator"]
