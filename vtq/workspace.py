@@ -42,7 +42,7 @@ class DefaultWorkspace(Workspace):
 
     @property
     def model_cls_factory(self) -> model.ModelClsFactory:
-        return model.ModelClsFactory(workspace=self.name, database=self.database)
+        return model.ModelClsFactory(prefix=self.name, database=self.database)
 
     @property
     def configuration_fetcher(self) -> configuration.ConfigurationFetcher:

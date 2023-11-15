@@ -64,10 +64,10 @@ def get_sqlite_database(name: str = "vtq.db"):
 def generate_model_class[M: type[BaseModel]](
     model_class: M,
     attrs: dict | None = None,
-    workspace: str = "default",
+    prefix: str = "default",
     database: peewee.Database | None = None,
 ) -> M:
-    cls_name_prefix = "".join(map(str.capitalize, workspace.split("_")))
+    cls_name_prefix = "".join(map(str.capitalize, prefix.split("_")))
     attrs = attrs or {}
 
     # class Meta:
@@ -82,16 +82,16 @@ def generate_model_class[M: type[BaseModel]](
 
 class ModelClsFactory:
     def __init__(
-        self, workspace: str = "default", database: peewee.Database | None = None
+        self, prefix: str = "default", database: peewee.Database | None = None
     ):
-        self._workspace = workspace
+        self._prefix = prefix
         self._database = database or get_sqlite_database()
 
     def _generate_cls[M: type[BaseModel]](
         self, model: M, attrs: dict | None = None
     ) -> M:
         return generate_model_class(
-            model, attrs=attrs, workspace=self._workspace, database=self._database
+            model, attrs=attrs, prefix=self._prefix, database=self._database
         )
 
     def generate_virtual_queue_cls(self) -> type[VirtualQueue]:
