@@ -35,6 +35,7 @@ class DefaultWorkspace(Workspace):
         self._coordinator = None
 
     def init(self):
+        """Do all the initialization work, such as table creation in the workspace"""
         cls_factory = self.model_cls_factory
         vq_cls = cls_factory.generate_virtual_queue_cls()
         task_cls = cls_factory.generate_task_cls(vq_cls)
@@ -42,6 +43,17 @@ class DefaultWorkspace(Workspace):
 
         with self.database:
             self.database.create_tables([vq_cls, task_cls, task_error_cls])
+
+    def flush_all(self):
+        """Clear all data in the workspace"""
+        cls_factory = self.model_cls_factory
+        vq_cls = cls_factory.generate_virtual_queue_cls()
+        task_cls = cls_factory.generate_task_cls(vq_cls)
+        task_error_cls = cls_factory.generate_task_error_cls(task_cls)
+        with self.database:
+            task_error_cls.truncate_table()
+            task_cls.truncate_table()
+            vq_cls.truncate_table()
 
     @property
     def database(self) -> peewee.Database:

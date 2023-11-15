@@ -8,17 +8,12 @@ class CoordinatorTestCase(unittest.TestCase):
     def setUp(self):
         ws = workspace.MemoryWorkspace()
         ws.init()
+        ws.flush_all()
         self.db = ws.database
         self.coordinator = ws.coordinator
         self.vq_cls = self.coordinator._vq_cls
         self.task_cls = self.coordinator._task_cls
         self.task_error_cls = self.coordinator._task_error_cls
-
-        # clear tables
-        with self.db:
-            self.task_error_cls.truncate_table()
-            self.task_cls.truncate_table()
-            self.vq_cls.truncate_table()
 
     def _enable_model_debug_logging(self):
         from vtq import model
