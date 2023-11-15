@@ -34,6 +34,15 @@ class DefaultWorkspace(Workspace):
         self._db = None
         self._coordinator = None
 
+    def init(self):
+        cls_factory = self.model_cls_factory
+        vq_cls = cls_factory.generate_virtual_queue_cls()
+        task_cls = cls_factory.generate_task_cls(vq_cls)
+        task_error_cls = cls_factory.generate_task_error_cls(task_cls)
+
+        with self.database:
+            self.database.create_tables([vq_cls, task_cls, task_error_cls])
+
     @property
     def database(self) -> peewee.Database:
         if not self._db:
@@ -70,6 +79,17 @@ class DefaultWorkspace(Workspace):
         return self._coordinator
 
 
-class WorkspaceFactory:
-    def create_workspace(self, name):
-        return DefaultWorkspace(name=name)
+class MemoryWorkspace(DefaultWorkspace):
+    @property
+    def database(self) -> peewee.Database:
+        """Note: SQLite `:memory:` mode is a special mode where each time the connection is dropped, the data is lost
+
+        https://stackoverflow.com/a/24708173
+        https://www.sqlite.org/inmemorydb.html
+        Shared in-memory databases: This allows separate database connections to share the same in-memory database. Of course, all database connections sharing the in-memory database need to be in the same process. The database is automatically deleted and memory is reclaimed when the last connection to the database closes.
+        """
+
+        if not self._db:
+            uri = f"file:{self.name}?mode=memory&cache=shared"
+            self._db = model.get_sqlite_database(uri, pool_size=10)
+        return self._db

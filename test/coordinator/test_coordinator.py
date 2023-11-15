@@ -6,7 +6,8 @@ from vtq import workspace
 
 class CoordinatorTestCase(unittest.TestCase):
     def setUp(self):
-        ws = workspace.DefaultWorkspace()
+        ws = workspace.MemoryWorkspace()
+        ws.init()
         self.db = ws.database
         self.coordinator = ws.coordinator
         self.vq_cls = self.coordinator._vq_cls

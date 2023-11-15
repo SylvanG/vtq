@@ -1,4 +1,5 @@
 import peewee
+from playhouse import pool
 import functools
 import uuid
 
@@ -49,7 +50,7 @@ class TaskError(BaseModel):
         primary_key = peewee.CompositeKey("task", "happened_at")
 
 
-def get_sqlite_database(name: str = "vtq.db"):
+def get_sqlite_database(name: str = "vtq.db", pool_size: int = 0):
     # https://docs.peewee-orm.com/en/latest/peewee/database.html#recommended-settings
     pragmas = {
         "journal_mode": "wal",
@@ -58,6 +59,17 @@ def get_sqlite_database(name: str = "vtq.db"):
         "ignore_check_constraints": 0,
         "synchronous": 0,
     }
+    if pool_size:
+        # Please check following doc to see all parameters
+        # https://docs.peewee-orm.com/en/latest/peewee/playhouse.html#PooledDatabase
+        return pool.PooledSqliteDatabase(
+            name,
+            max_connections=pool_size,
+            stale_timeout=3600,
+            timeout=0,  # block forever if pool is full
+            pragmas=pragmas,
+            autoconnect=False,
+        )
     return peewee.SqliteDatabase(name, pragmas=pragmas, autoconnect=False)
 
 
