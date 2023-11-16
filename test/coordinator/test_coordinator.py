@@ -272,3 +272,23 @@ class CoordinatorTestCase(unittest.TestCase):
     def test_retry_non_exist_task(self):
         rv = self.coordinator.retry(self._new_task_id())
         assert rv is False
+
+    def test_len(self):
+        assert len(self.coordinator) == 0
+
+    def test_len_with_tasks(self):
+        vq = self._add_vq()
+
+        vq.add_task()
+        assert len(self.coordinator) == 1
+
+        vq.add_task()
+        assert len(self.coordinator) == 2
+
+    def test_len_with_completed_tasks(self):
+        vq = self._add_vq()
+        vq.add_task()
+        vq.add_task()
+        task = self.coordinator.receive()[0]
+        self.coordinator.ack(task.id)
+        assert len(self.coordinator) == 1

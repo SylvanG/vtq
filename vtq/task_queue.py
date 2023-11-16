@@ -68,7 +68,7 @@ class TaskQueue(abc.ABC):
 
     @abstractmethod
     def __len__(self) -> int:
-        """Returns the number of uncompleted tasks in th queu, excluding those are in the process"""
+        """Returns the number of uncompleted tasks in th queue, including those are in the process"""
         pass
 
     # following methods are for task management.

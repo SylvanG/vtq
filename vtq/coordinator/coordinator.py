@@ -53,7 +53,7 @@ class Coordinator(task_queue.TaskQueue):
             except peewee.IntegrityError as e:
                 if e.args[0] != "FOREIGN KEY constraint failed":
                     raise
-                logger.warning(f"VQ {vqueue_name} doesn't exists")
+                logger.warning(f"VQ '{vqueue_name}' doesn't exists, creating it")
 
                 task = self._enqueue_task_with_new_vq(
                     task_data, vqueue_name, priority, visible_at
@@ -279,13 +279,19 @@ class Coordinator(task_queue.TaskQueue):
         return True
 
     def __len__(self) -> int:
-        return super().__len__()
+        with self._db:
+            # visible_at is used to fetch aviable task, and status is used to find uncompleted task
+            return (
+                self._task_cls.select(peewee.fn.COUNT(self._task_cls.id))
+                .where(self._task_cls.status < 100)
+                .scalar()
+            )
 
     def delete(self, task_id: str):
-        return super().delete(task_id)
+        raise NotImplementedError
 
     def update(self, task_id: str, **kwargs):
-        return super().update(task_id, **kwargs)
+        raise NotImplementedError
 
 
 if __name__ == "__main__":
