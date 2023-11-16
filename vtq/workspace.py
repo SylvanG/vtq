@@ -8,9 +8,19 @@ from vtq import channel
 
 
 class Workspace(abc.ABC):
+    """A workspace is a designated area where a group of homogeneous workers handle tasks originating from a VTQ (Virtual Task Queue). It contains the `Coordinator` for the VTQ, represented as a `TaskQueue` object. Initializing all the prerequisites for utilizing the VTQ is possible within this workspace. Additionally, you can seamlessly access database and model classes, enabling interaction with the underlying data"""
+
     @abstractmethod
     def __init__(self, name: str) -> None:
         pass
+
+    @abstractmethod
+    def init(self):
+        """Do all the initialization work in the workspace"""
+
+    @abstractmethod
+    def flush_all(self):
+        """Clear all data in the workspace"""
 
     @property
     @abstractmethod
