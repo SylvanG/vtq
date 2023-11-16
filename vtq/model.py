@@ -50,7 +50,10 @@ class TaskError(BaseModel):
         primary_key = peewee.CompositeKey("task", "happened_at")
 
 
-def get_sqlite_database(name: str = "vtq.db", pool_size: int = 0):
+def get_sqlite_database(
+    name: str = "vtq.db", pool_size: int = 0, check_same_thread=True
+):
+    """If pool_size > 0, check_same_thread could be used to allow the SQLite connection to be shared across threads, but you should take care of not using the same connection the same tim ein different threads."""
     # https://docs.peewee-orm.com/en/latest/peewee/database.html#recommended-settings
     pragmas = {
         "journal_mode": "wal",
@@ -69,6 +72,8 @@ def get_sqlite_database(name: str = "vtq.db", pool_size: int = 0):
             timeout=0,  # block forever if pool is full
             pragmas=pragmas,
             autoconnect=False,
+            # https://stackoverflow.com/a/48234567
+            check_same_thread=check_same_thread,
         )
     return peewee.SqliteDatabase(name, pragmas=pragmas, autoconnect=False)
 
