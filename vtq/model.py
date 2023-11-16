@@ -10,6 +10,13 @@ InitMilliTimeStampField = functools.partial(
 CurrrentMilliTimeStampField = functools.partial(peewee.TimestampField, resolution=3)
 
 
+class BinaryUUIDField(peewee.BinaryUUIDField):
+    def db_value(self, value):
+        if isinstance(value, str) and len(value) == 36:
+            return self._constructor(uuid.UUID(value).bytes)
+        return super().db_value(value)
+
+
 class BaseModel(peewee.Model):
     class Meta:
         # will be default in Peewee 4.0, table name will be snakecase
@@ -27,7 +34,7 @@ class VirtualQueue(BaseModel):
 
 
 class Task(BaseModel):
-    id = peewee.BinaryUUIDField(primary_key=True, default=uuid.uuid4)
+    id = BinaryUUIDField(primary_key=True, default=uuid.uuid4)
     data = peewee.BlobField()
     vqueue = peewee.ForeignKeyField(
         VirtualQueue, column_name="vqueue_name", backref="tasks"

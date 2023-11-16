@@ -39,10 +39,10 @@ class CoordinatorTestCase(unittest.TestCase):
         return VQ(name, self.db, self.task_cls)
 
     def _get_ids(self, tasks):
-        return list(map(lambda t: t.id, tasks))
+        return list(map(lambda t: str(t.id), tasks))
 
     def _new_task_id(self):
-        return uuid.uuid4()
+        return str(uuid.uuid4())
 
     def _get_task_model(self, task_id):
         with self.db:

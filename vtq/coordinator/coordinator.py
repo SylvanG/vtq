@@ -87,7 +87,7 @@ class Coordinator(task_queue.TaskQueue):
         """Get tasks from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
         tasks: list[Task] = []
         while len(tasks) < max_number:
-            task = self._read()
+            task = self._receive()
             if not task:
                 if tasks or wait_time_seconds <= 0:
                     return tasks
@@ -97,13 +97,20 @@ class Coordinator(task_queue.TaskQueue):
 
         return tasks
 
-    def _read(self) -> Task | None:
+    def _receive(self) -> Task | None:
         """Get a task from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
-        current_ts = time.time()
+        task = self._read()
+        if task:
+            # TODO: raise a update failure excpetion, or do a retry automatically; and log it.
+            self._update_task_and_vq(task)
+            return Task(str(task.id), task.data)
+
+    def _read(self) -> model.Task | None:
         fn = peewee.fn
         task_cls = self._task_cls
         vq_cls = self._vq_cls
         with self._db:
+            current_ts = time.time()
             # select the max priority layer from the avaible VQs and available tasks.
             available_task_query = (
                 task_cls.select(task_cls, vq_cls)
@@ -147,9 +154,7 @@ class Coordinator(task_queue.TaskQueue):
             if not task:
                 return
             print(task.id, task.vqueue_name, task.priority)
-
-        self._update_task_and_vq(task)
-        return Task(task.id, task.data)
+            return task
 
     def _update_task_and_vq(self, task):
         task_cls = self._task_cls
@@ -179,7 +184,7 @@ class Coordinator(task_queue.TaskQueue):
 
                 # TODO: update VQ hidden according to Rate limit policy
 
-    def _get_task_only_status(self, task_id) -> model.Task | None:
+    def _get_task_only_status(self, task_id: str) -> model.Task | None:
         task: model.Task | None = (
             self._task_cls.select(self._task_cls.id, self._task_cls.status)
             .where(self._task_cls.id == task_id)
