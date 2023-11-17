@@ -1,6 +1,8 @@
 import unittest
 import time
+import concurrent.futures
 import uuid
+import peewee
 from vtq import workspace
 
 
@@ -34,7 +36,7 @@ class CoordinatorTestCase(unittest.TestCase):
                 kwargs.setdefault("data", b"data")
                 with self.db:
                     task = self.task_cls.create(vqueue_name=name, **kwargs)
-                return task.id
+                return str(task.id)
 
         return VQ(name, self.db, self.task_cls)
 
@@ -292,3 +294,87 @@ class CoordinatorTestCase(unittest.TestCase):
         task = self.coordinator.receive()[0]
         self.coordinator.ack(task.id)
         assert len(self.coordinator) == 1
+
+    def test_multithread_receive(self):
+        vq = self._add_vq()
+        for _ in range(100):
+            vq.add_task()
+
+        def receivce(i):
+            try:
+                task = self.coordinator.receive()
+                assert task
+            except Exception as e:
+                print(e)
+                raise
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(receivce, range(100)))
+
+    def test_multithread_ack(self):
+        vq = self._add_vq()
+        for _ in range(100):
+            vq.add_task()
+        q = []
+        for task in self.coordinator.receive(max_number=100):
+            q.append(task.id)
+
+        def ack_wrap(ack_fn):
+            def wrap(task_id):
+                try:
+                    assert ack_fn(task_id)
+                except Exception as e:
+                    print(e)
+                    raise
+
+            return wrap
+
+        def raw_ack(task_id):
+            id_bytes = uuid.UUID(task_id).bytes
+            # For a connection context without a transaction, use Database.connection_context().
+            # `with self.db:` is using execution context, where a transaction is used, which will have a BEGIN before executing the following SQL and potentially cause more database lock operation errors (even if the execution is not timeout and total time is less than 0.03s)
+            with self.db.connection_context():
+                ts = int(time.time() * 1000)
+                c = self.db.execute_sql(
+                    'SELECT "t1"."id", "t1"."status" FROM "default_task" AS "t1" WHERE ("t1"."id" = ?) LIMIT ?',
+                    [id_bytes, 1],
+                )
+                c.fetchone()
+                c.close()
+
+                c = self.db.execute_sql(
+                    'UPDATE "default_task" SET "visible_at" = ?, "status" = ?, "ended_at" = ?, "updated_at" = ? WHERE ("default_task"."id" = ?)',
+                    [2147483647000, 100, ts, ts, id_bytes],
+                )
+                c.close()
+                return c.rowcount
+
+        with self.subTest("ack"):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(ack_wrap(self.coordinator.ack), q))
+
+        with self.subTest("raw_ack"):
+            assert (
+                self.db._max_connections > 1
+            ), "single connection pool will block threads working concurrently"
+            with self.assertRaisesRegex(
+                peewee.OperationalError, "database table is locked: default_task"
+            ):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                    list(executor.map(ack_wrap(raw_ack), q))
+
+    def test_multithread_retry(self):
+        vq = self._add_vq()
+        for _ in range(100):
+            vq.add_task()
+        q = [task.id for task in self.coordinator.receive(max_number=100)]
+
+        def retry(task_id):
+            try:
+                assert self.coordinator.retry(task_id)
+            except Exception as e:
+                print(e)
+                raise
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(retry, q))

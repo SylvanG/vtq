@@ -1,5 +1,7 @@
+import functools
 import logging
 import time
+import threading
 import peewee
 from vtq import task_queue
 from vtq import model
@@ -12,6 +14,21 @@ logger = logging.getLogger(name=__name__)
 
 
 _INVISIBLE_TIMESTAMP_SECONDS = 2**31 - 1
+
+
+def retry_sqlite_db_table_locked(f):
+    @functools.wraps(f)
+    def wrap(*args, **kwargs):
+        while True:
+            try:
+                return f(*args, **kwargs)
+            except peewee.OperationalError as e:
+                if "database table is locked" in e.args[0]:
+                    logger.warning(f"{f.__name__}: Retry the method as {e}")
+                    continue
+                raise
+
+    return wrap
 
 
 class Coordinator(task_queue.TaskQueue):
@@ -32,6 +49,7 @@ class Coordinator(task_queue.TaskQueue):
         self._channel = channel
         self._config_fetcher = config_fetcher
 
+        self._receive_lock = threading.Lock()
     def enqueue(
         self,
         task_data: bytes,
@@ -42,7 +60,7 @@ class Coordinator(task_queue.TaskQueue):
         """Insert the task data into the SQL table. Then publish the event that task is added."""
         visible_at = time.time() + delay_millis / 1000.0 if delay_millis else 0
 
-        with self._db:
+        with self._db.connection_context():
             try:
                 task: model.Task = self._task_cls.create(
                     data=task_data,
@@ -99,17 +117,23 @@ class Coordinator(task_queue.TaskQueue):
 
     def _receive(self) -> Task | None:
         """Get a task from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
-        task = self._read()
-        if task:
-            # TODO: raise a update failure excpetion, or do a retry automatically; and log it.
-            self._update_task_and_vq(task)
-            return Task(str(task.id), task.data)
+        with self._receive_lock:
+            while True:
+                task = self._read()
+                if not task:
+                    return
+
+                # TODO: set maxium retry and log it.
+                if self._update_task_and_vq(task):
+                    return Task(str(task.id), task.data)
+
+                logger.warning("_update_task_and_vq failed and retry")
 
     def _read(self) -> model.Task | None:
         fn = peewee.fn
         task_cls = self._task_cls
         vq_cls = self._vq_cls
-        with self._db:
+        with self._db.connection_context():
             current_ts = time.time()
             # select the max priority layer from the avaible VQs and available tasks.
             available_task_query = (
@@ -156,33 +180,38 @@ class Coordinator(task_queue.TaskQueue):
             print(task.id, task.vqueue_name, task.priority)
             return task
 
-    def _update_task_and_vq(self, task):
+    @retry_sqlite_db_table_locked
+    def _update_task_and_vq(self, task) -> bool:
         task_cls = self._task_cls
         vq_cls = self._vq_cls
 
         # TODO: check rate limit
 
-        with self._db:
-            with self._db.atomic():
-                current_ts = time.time()
-                vqueue_subquery = vq_cls.select(vq_cls.name).where(
-                    (vq_cls.name == task.vqueue_name)
-                    & (vq_cls.updated_at == task.vqueue_updated_at)
-                    # & ~vq_cls.hidden
-                )
+        with self._db:  # open connection with a transaction
+            current_ts = time.time()
+            vqueue_subquery = vq_cls.select(vq_cls.name).where(
+                (vq_cls.name == task.vqueue_name)
+                & (vq_cls.updated_at == task.vqueue_updated_at)
+                # & ~vq_cls.hidden
+            )
+            rv = (
                 task_cls.update(
                     status=50,
                     visible_at=task.vqueue_visibility_timeout + current_ts,
                     updated_at=current_ts,
-                ).where(
+                )
+                .where(
                     (task_cls.id == task.id)
                     & (task_cls.vqueue_name == vqueue_subquery)
                     & (task_cls.updated_at == task.updated_at)
                     # & (task_cls.status < 10)
                     # & (task_cls.visible_at <= current_ts)
-                ).execute()
+                )
+                .execute()
+            )
 
-                # TODO: update VQ hidden according to Rate limit policy
+            # TODO: update VQ hidden according to Rate limit policy
+            return bool(rv)
 
     def _get_task_only_status(self, task_id: str) -> model.Task | None:
         task: model.Task | None = (
@@ -192,8 +221,9 @@ class Coordinator(task_queue.TaskQueue):
         )
         return task
 
+    @retry_sqlite_db_table_locked
     def ack(self, task_id: str) -> bool:
-        with self._db:
+        with self._db.connection_context():
             task = self._get_task_only_status(task_id)
             if not task:
                 return False
@@ -211,8 +241,9 @@ class Coordinator(task_queue.TaskQueue):
             task.save()
         return True
 
+    @retry_sqlite_db_table_locked
     def nack(self, task_id: str, error_message: str) -> bool:
-        with self._db:
+        with self._db.connection_context():
             task = self._get_task_only_status(task_id)
             if not task:
                 return False
@@ -237,8 +268,9 @@ class Coordinator(task_queue.TaskQueue):
                     )
         return True
 
+    @retry_sqlite_db_table_locked
     def requeue(self, task_id: str) -> bool:
-        with self._db:
+        with self._db.connection_context():
             task = self._get_task_only_status(task_id)
             if not task:
                 return False
@@ -255,10 +287,11 @@ class Coordinator(task_queue.TaskQueue):
             task.save()
         return True
 
+    @retry_sqlite_db_table_locked
     def retry(
         self, task_id: str, delay_millis: int = 0, error_message: str = ""
     ) -> bool:
-        with self._db:
+        with self._db.connection_context():
             task = self._get_task_only_status(task_id)
             if not task:
                 return False
@@ -268,23 +301,24 @@ class Coordinator(task_queue.TaskQueue):
                 return False
 
             # TODO: change to conditional atomic update, using where clause with update
-            with self._db.atomic():
-                current_ts = time.time()
-                visible_at = current_ts + delay_millis / 1000.0 if delay_millis else 0
-                task.status = 1
-                task.visible_at = visible_at
-                task.updated_at = current_ts
-                task.save()
-                if error_message:
-                    self._task_error_cls.create(
-                        task_id=task.id,
-                        err_msg=error_message,
-                        happended_at=current_ts,
-                    )
+            # with self._db.atomic():
+            current_ts = time.time()
+            visible_at = current_ts + delay_millis / 1000.0 if delay_millis else 0
+            task.status = 1
+            task.visible_at = visible_at
+            task.updated_at = current_ts
+            task.save()
+            if error_message:
+                self._task_error_cls.create(
+                    task_id=task.id,
+                    err_msg=error_message,
+                    happended_at=current_ts,
+                )
         return True
 
+    @retry_sqlite_db_table_locked
     def __len__(self) -> int:
-        with self._db:
+        with self._db.connection_context():
             # visible_at is used to fetch aviable task, and status is used to find uncompleted task
             return (
                 self._task_cls.select(peewee.fn.COUNT(self._task_cls.id))
