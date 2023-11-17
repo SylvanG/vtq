@@ -114,6 +114,6 @@ class MemoryWorkspace(DefaultWorkspace):
         if not self._db:
             uri = f"file:{self.name}?mode=memory&cache=shared"
             self._db = model.get_sqlite_database(
-                uri, pool_size=10, check_same_thread=False
+                uri, pool_size=5, check_same_thread=False
             )
         return self._db
