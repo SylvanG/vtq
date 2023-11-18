@@ -42,8 +42,9 @@ class SimpleNotificationWorker(NotificationWorker):
 
     def _loop(self):
         event = self._event
-        while not event.is_set():
-            time.sleep(self._interval)
+        while True:
+            if event.wait(self._interval):
+                return
             for subscribe in self._subscribers:
                 subscribe()
 

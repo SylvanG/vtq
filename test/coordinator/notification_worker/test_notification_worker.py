@@ -54,7 +54,4 @@ class SimpleNotificationWorkerTestCase(unittest.TestCase):
         self.worker.connect_to_available_task(f)
         self.worker.stop()
         time.sleep(0.11)
-        f.assert_called_once()
-        f.reset_mock()
-        time.sleep(0.11)
         f.assert_not_called()
