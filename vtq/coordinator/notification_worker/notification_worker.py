@@ -1,9 +1,7 @@
 import abc
+import threading
 from abc import abstractmethod
 from collections.abc import Callable
-import time
-import threading
-
 
 SubscriberType = Callable[[], None]
 
