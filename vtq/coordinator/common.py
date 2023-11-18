@@ -5,11 +5,11 @@ import time
 def log_time(f):
     @functools.wraps(f)
     def wrap(*args, **kwargs):
-        s = time.time()
+        s = time.perf_counter()
         try:
             return f(*args, **kwargs)
         except:
-            d = time.time() - s
+            d = time.perf_counter() - s
             print(f"{f.__name__}: {d}")
             raise
 
