@@ -1,10 +1,13 @@
 import abc
 from abc import abstractmethod
+from collections.abc import Callable
 import peewee
 from vtq import configuration
 from vtq import coordinator
 from vtq import model
 from vtq import channel
+from vtq.coordinator import waiting_barrier
+from vtq.coordinator import notification_worker
 
 
 class Workspace(abc.ABC):
@@ -34,14 +37,26 @@ class Workspace(abc.ABC):
 
     @property
     @abstractmethod
+    def notification_worker(self) -> notification_worker.NotificationWorker:
+        pass
+
+    @property
+    @abstractmethod
     def coordinator(self) -> coordinator.Coordinator:
         pass
 
 
 class DefaultWorkspace(Workspace):
-    def __init__(self, name: str = "default") -> None:
+    def __init__(
+        self,
+        name: str = "default",
+        *,
+        database: peewee.Database | None = None,
+        notificaiton_worker: notification_worker.NotificationWorker | None = None,
+    ) -> None:
         self.name = name
-        self._db = None
+        self._db = database
+        self._notificaiton_worker = notificaiton_worker
         self._coordinator = None
 
     def init(self):
@@ -84,6 +99,12 @@ class DefaultWorkspace(Workspace):
         return channel.Channel()
 
     @property
+    def notification_worker(self) -> notification_worker.NotificationWorker:
+        if not self._notificaiton_worker:
+            self._notificaiton_worker = notification_worker.SimpleNotificationWorker()
+        return self._notificaiton_worker
+
+    @property
     def coordinator(self) -> coordinator.Coordinator:
         if not self._coordinator:
             cls_factory = self.model_cls_factory
@@ -97,6 +118,8 @@ class DefaultWorkspace(Workspace):
                 task_error_cls=task_error_cls,
                 config_fetcher=self.configuration_fetcher,
                 channel=self.channel,
+                task_notification_worker=self.notification_worker,
+                receive_waiting_barrier=waiting_barrier.SimpleWaitingBarrier(),
             )
         return self._coordinator
 
@@ -117,3 +140,6 @@ class MemoryWorkspace(DefaultWorkspace):
                 uri, pool_size=5, check_same_thread=False
             )
         return self._db
+
+
+WorkspaceFactory = Callable[[str], Workspace]

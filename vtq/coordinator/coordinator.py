@@ -1,14 +1,14 @@
 import functools
 import logging
-import time
 import threading
+import time
+
 import peewee
-from vtq import task_queue
-from vtq import model
-from vtq import channel
-from vtq import configuration
-from vtq.task import Task
+
+from vtq import channel, configuration, model, task_queue
+from vtq.coordinator import notification_worker, waiting_barrier
 from vtq.coordinator import task as task_mod
+from vtq.task import Task
 
 logger = logging.getLogger(name=__name__)
 
@@ -39,6 +39,8 @@ class Coordinator(task_queue.TaskQueue):
         task_cls: type[model.Task],
         task_error_cls: type[model.TaskError],
         config_fetcher: configuration.ConfigurationFetcher,
+        receive_waiting_barrier: waiting_barrier.WaitingBarrier,
+        task_notification_worker: notification_worker.NotificationWorker,
         channel: channel.Channel | None = None,
     ):
         self._db = database
@@ -50,6 +52,13 @@ class Coordinator(task_queue.TaskQueue):
         self._config_fetcher = config_fetcher
 
         self._receive_lock = threading.Lock()
+        self._receive_waiting_barrier = receive_waiting_barrier
+        self._available_task_event = threading.Event()
+        self._task_notification_worker = task_notification_worker
+        task_notification_worker.connect_to_available_task(
+            self._available_task_event.set
+        )
+
     def enqueue(
         self,
         task_data: bytes,
@@ -78,7 +87,7 @@ class Coordinator(task_queue.TaskQueue):
                 )
 
         if self._channel:
-            self._channel.send(task.id)
+            self._channel.send_task(str(task.id), visible_at)
         return task.id
 
     def _enqueue_task_with_new_vq(
@@ -103,23 +112,58 @@ class Coordinator(task_queue.TaskQueue):
 
     def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
         """Get tasks from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
+        if not self._receive_waiting_barrier.is_clear:
+            if wait_time_seconds:
+                return self._block_receive(wait_time_seconds)
+            else:
+                return []
+
         tasks: list[Task] = []
         while len(tasks) < max_number:
-            task = self._receive()
+            task = self._receive_one()
             if not task:
                 if tasks or wait_time_seconds <= 0:
                     return tasks
-                # TODO: block to wait at most `wait_time_seconds`
-                raise NotImplementedError
+                return self._block_receive(wait_time_seconds)
             tasks.append(task)
 
         return tasks
 
-    def _receive(self) -> Task | None:
+    def _block_receive(self, wait_time_seconds: int) -> list[Task]:
+        """Read at most one task per thread. This is because that requests blocking here means that there are less tasks than the worker, so we are going to make requests return as soon as possible. Once we found a task, we will return it immediately."""
+        task = self._block_receive_one_thread_safe(wait_time_seconds)
+        return [task] if task else []
+
+    def _block_receive_one_thread_safe(self, wait_time_seconds: int) -> Task | None:
+        with self._receive_waiting_barrier.wait(wait_time_seconds) as rv:
+            if rv:
+                return self._block_receive_one(wait_time_seconds)
+
+    def _block_receive_one(self, wait_time_seconds: int) -> Task | None:
+        event = self._available_task_event
+
+        # TODO: add maximum loop and log for exceeding the loop number
+        while True:
+            # Prepare to listen to the notification (task add notify and delay task timer) before querying the table.
+            event.clear()
+
+            # query the table
+            task = self._receive_one()
+            if task:
+                return task
+
+            if event.is_set():
+                # It's possible the new available task is taken by other process or service.
+                continue
+
+            # wait for the avaiable tasks
+            event.wait(timeout=wait_time_seconds)
+
+    def _receive_one(self) -> Task | None:
         """Get a task from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
         with self._receive_lock:
             while True:
-                task = self._read()
+                task = self._read_one()
                 if not task:
                     return
 
@@ -129,7 +173,8 @@ class Coordinator(task_queue.TaskQueue):
 
                 logger.warning("_update_task_and_vq failed and retry")
 
-    def _read(self) -> model.Task | None:
+    @retry_sqlite_db_table_locked
+    def _read_one(self) -> model.Task | None:
         fn = peewee.fn
         task_cls = self._task_cls
         vq_cls = self._vq_cls
@@ -174,10 +219,8 @@ class Coordinator(task_queue.TaskQueue):
                 .objects()  # there is a peewee bug, the Task model only has id/priority property populated, but without vqueue_name.
                 .first()
             )
-            print(task)
             if not task:
                 return
-            print(task.id, task.vqueue_name, task.priority)
             return task
 
     @retry_sqlite_db_table_locked
@@ -211,6 +254,7 @@ class Coordinator(task_queue.TaskQueue):
             )
 
             # TODO: update VQ hidden according to Rate limit policy
+            # TODO: channel.send_vqueue if updated
             return bool(rv)
 
     def _get_task_only_status(self, task_id: str) -> model.Task | None:
@@ -285,6 +329,10 @@ class Coordinator(task_queue.TaskQueue):
             task.visible_at = 0
             task.updated_at = current_ts
             task.save()
+
+        if self._channel:
+            self._channel.send_task(str(task.id), task.visible_at)
+
         return True
 
     @retry_sqlite_db_table_locked
@@ -314,6 +362,8 @@ class Coordinator(task_queue.TaskQueue):
                     err_msg=error_message,
                     happended_at=current_ts,
                 )
+        if self._channel:
+            self._channel.send_task(str(task.id), visible_at)
         return True
 
     @retry_sqlite_db_table_locked

@@ -4,18 +4,24 @@ import concurrent.futures
 import uuid
 import peewee
 from vtq import workspace
+from vtq.coordinator.notification_worker import SimpleNotificationWorker
 
 
 class CoordinatorTestCase(unittest.TestCase):
     def setUp(self):
-        ws = workspace.MemoryWorkspace()
+        notification_worker = SimpleNotificationWorker(interval=0.1)
+        ws = workspace.MemoryWorkspace(notificaiton_worker=notification_worker)
         ws.init()
         ws.flush_all()
+        self.ws = ws
         self.db = ws.database
         self.coordinator = ws.coordinator
         self.vq_cls = self.coordinator._vq_cls
         self.task_cls = self.coordinator._task_cls
         self.task_error_cls = self.coordinator._task_error_cls
+
+    def tearDown(self):
+        self.ws.notification_worker.stop()
 
     def _enable_model_debug_logging(self):
         from vtq import model
@@ -378,3 +384,48 @@ class CoordinatorTestCase(unittest.TestCase):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             list(executor.map(retry, q))
+
+    def test_receive_block(self):
+        vq = self._add_vq()
+
+        def block_receive():
+            try:
+                tasks = self.coordinator.receive(wait_time_seconds=3600)
+            except Exception as e:
+                print(e)
+                raise
+            else:
+                assert tasks
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(block_receive)
+            time.sleep(0.1)
+            vq.add_task()
+            assert not future.exception(), future.exception()
+
+    def test_receive_multiple_block(self):
+        vq = self._add_vq()
+
+        def block_receive():
+            try:
+                tasks = self.coordinator.receive(wait_time_seconds=3600)
+            except Exception as e:
+                print(e)
+                raise
+            else:
+                assert tasks
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            fs = [executor.submit(block_receive) for i in range(10)]
+            time.sleep(0.1)
+            for i in range(11):
+                vq.add_task()
+            for future in concurrent.futures.as_completed(fs):
+                assert not future.exception(), future.exception()
+
+        tasks = self.coordinator.receive()
+        assert tasks
+        assert len(tasks) == 1
+
+        tasks = self.coordinator.receive()
+        assert not tasks
