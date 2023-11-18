@@ -9,7 +9,10 @@ SubscriberType = Callable[[], None]
 
 
 class NotificationWorker(abc.ABC):
-    """Delay task avaiable or New task added or Virtual Queue state changes"""
+    """Delay task avaiable or New task added or Virtual Queue state changes
+
+    Current, the NotificationWorker is in the auto (start/stop) model, the conenct/disconnect method will trigger the start/stop of the worker. In the future, it could add a property to enable/disable the automode.
+    """
 
     @abstractmethod
     def connect_to_available_task(self, subscriber: SubscriberType):
@@ -22,6 +25,10 @@ class NotificationWorker(abc.ABC):
     @abstractmethod
     def disconnect(self, subscriber: SubscriberType):
         raise NotImplementedError
+
+    @abstractmethod
+    def stop(self):
+        """Manually stop the worker."""
 
 
 class SimpleNotificationWorker(NotificationWorker):
@@ -62,3 +69,9 @@ class SimpleNotificationWorker(NotificationWorker):
                 if not self._subscribers and self._thread:
                     self._event.set()
                     self._thread = None
+
+    def stop(self):
+        with self._lock:
+            if self._thread:
+                self._event.set()
+                self._thread = None
