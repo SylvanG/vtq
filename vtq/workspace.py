@@ -1,13 +1,11 @@
 import abc
 from abc import abstractmethod
-from collections.abc import Callable
+from typing import Protocol
+
 import peewee
-from vtq import configuration
-from vtq import coordinator
-from vtq import model
-from vtq import channel
-from vtq.coordinator import waiting_barrier
-from vtq.coordinator import notification_worker
+
+from vtq import channel, configuration, coordinator, model
+from vtq.coordinator import notification_worker, waiting_barrier
 
 
 class Workspace(abc.ABC):
@@ -142,4 +140,6 @@ class MemoryWorkspace(DefaultWorkspace):
         return self._db
 
 
-WorkspaceFactory = Callable[[str], Workspace]
+class WorkspaceFactory(Protocol):
+    def __call__(self, name: str, **kwargs) -> Workspace:
+        ...
