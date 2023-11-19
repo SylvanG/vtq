@@ -25,12 +25,16 @@ class BaseModel(peewee.Model):
 
 class VirtualQueue(BaseModel):
     name = peewee.CharField(primary_key=True)
+    updated_at = CurrrentMilliTimeStampField()
+
+    # configuration
     priority = peewee.SmallIntegerField(default=50)
     bucket_name = peewee.CharField(default="")
     bucket_weight = peewee.IntegerField(default=100)
     visibility_timeout = peewee.IntegerField(default=86400)
-    hidden = peewee.BooleanField(default=False)
-    updated_at = CurrrentMilliTimeStampField()
+
+    # states
+    visible_at = InitMilliTimeStampField()
 
 
 class Task(BaseModel):

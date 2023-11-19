@@ -111,7 +111,7 @@ class Coordinator(task_queue.TaskQueue):
         return task
 
     def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
-        """Get tasks from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
+        """Get tasks from the SQL table, then update the VQ `visible_at` status by the result from the Rate Limit."""
         if not self._receive_waiting_barrier.is_clear:
             if wait_time_seconds:
                 return self._block_receive(wait_time_seconds)
@@ -160,7 +160,7 @@ class Coordinator(task_queue.TaskQueue):
             event.wait(timeout=wait_time_seconds)
 
     def _receive_one(self) -> Task | None:
-        """Get a task from the SQL table, then update the VQ `hidden` status by the result from the Rate Limit."""
+        """Get a task from the SQL table, then update the VQ `visible_at` status by the result from the Rate Limit."""
         with self._receive_lock:
             while True:
                 task = self._read_one()
@@ -184,7 +184,10 @@ class Coordinator(task_queue.TaskQueue):
             available_task_query = (
                 task_cls.select(task_cls, vq_cls)
                 .join(vq_cls)
-                .where((~vq_cls.hidden) & (current_ts >= task_cls.visible_at))
+                .where(
+                    (current_ts >= vq_cls.visible_at)
+                    & (current_ts >= task_cls.visible_at)
+                )
             )
 
             max_vq_priority = available_task_query.select(
