@@ -17,7 +17,7 @@ class Channel:
     def disconnect(self, subscriber: Callable):
         pass
 
-    def send_vqueue(self, name: str, hidden: bool):
+    def send_vqueue(self, name: str, visible_at: float):
         pass
 
     def connect_to_vqueue(self, subscriber: Callable[[str, bool], None]):
