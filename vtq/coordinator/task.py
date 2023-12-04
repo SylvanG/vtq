@@ -1,4 +1,14 @@
 from vtq.model import Task
+import enum
+
+
+class TaskStatus(enum.IntEnum):
+    UNSTARTED = 0
+    PENDING = 1  # waiting for retry
+    CONFIRMING = 10
+    PROCESSING = 50
+    SUCCEEDED = 100
+    FAILED = 101
 
 
 def is_queued(task: Task) -> bool:
