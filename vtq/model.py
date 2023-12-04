@@ -2,6 +2,7 @@ import peewee
 from playhouse import pool
 import functools
 import uuid
+import logging
 
 
 InitMilliTimeStampField = functools.partial(
@@ -32,6 +33,7 @@ class VirtualQueue(BaseModel):
     bucket_name = peewee.CharField(default="")
     bucket_weight = peewee.IntegerField(default=100)
     visibility_timeout = peewee.IntegerField(default=86400)
+    rate_limit_type = peewee.CharField(default="")
 
     # states
     visible_at = InitMilliTimeStampField()
@@ -59,6 +61,33 @@ class TaskError(BaseModel):
 
     class Meta:
         primary_key = peewee.CompositeKey("task", "happened_at")
+
+
+def build_task_from_query_result(allow_unknown_fields=False, **kwargs):
+    vqueue_data = {}
+    task_data = {}
+    remaining = {}
+    for field_name, value in kwargs.items():
+        if field_name.startswith("vqueue_"):
+            vqueue_field = VirtualQueue._meta.fields[field_name[7:]]
+            vqueue_data[vqueue_field.name] = vqueue_field.python_value(value)
+        elif field_name in Task._meta.fields:
+            field = Task._meta.fields[field_name]
+            task_data[field_name] = field.python_value(value)
+        elif allow_unknown_fields:
+            remaining[field_name] = value
+
+    if vqueue_data:
+        assert "name" in vqueue_data
+        task_data["vqueue"] = VirtualQueue(**vqueue_data)
+
+    task = Task(**task_data)
+
+    if allow_unknown_fields:
+        for k, v in remaining.items():
+            setattr(task, k, v)
+
+    return task
 
 
 def get_sqlite_database(
@@ -139,11 +168,26 @@ class ModelClsFactory:
 
 
 def enable_debug_logging(disable_handler=False):
-    import logging
-
     peewee.logger.setLevel(logging.DEBUG)
     if not disable_handler:
         peewee.logger.addHandler(logging.StreamHandler())
+
+
+def retry_sqlite_db_table_locked(f, logger=None):
+    logger = logger or logging.getLogger("RetrySqliteDbTableLocked")
+
+    @functools.wraps(f)
+    def wrap(*args, **kwargs):
+        while True:
+            try:
+                return f(*args, **kwargs)
+            except peewee.OperationalError as e:
+                if "database table is locked" in e.args[0]:
+                    logger.warning(f"{f.__name__}: Retry the method as {e}")
+                    continue
+                raise
+
+    return wrap
 
 
 if __name__ == "__main__":
@@ -160,6 +204,8 @@ if __name__ == "__main__":
         db.create_tables([DefaultTask, DefaultVirtualQueue, DefaultTaskError])
         vq = DefaultVirtualQueue.create(name="test_vq", priority=70)
         task = DefaultTask.create(data=b"123", vqueue=vq)
+        print(task.vqueue_name)
+        print()
 
         t: Task = DefaultTask.select().get()
         print(t.id, t.visible_at, t.queued_at, t.started_at, t.updated_at)
