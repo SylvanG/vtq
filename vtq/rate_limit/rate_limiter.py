@@ -1,9 +1,6 @@
 import abc
 from abc import abstractmethod
-from collections.abc import Generator
 from typing import Protocol
-import contextlib
-import dataclasses
 from vtq.rate_limit.type import RateLimitType
 
 
