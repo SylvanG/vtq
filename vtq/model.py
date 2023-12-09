@@ -37,6 +37,7 @@ class VirtualQueue(BaseModel):
 
     # states
     visible_at = InitMilliTimeStampField()
+    rate_limit_ver = peewee.BigIntegerField(default=0)
 
 
 class Task(BaseModel):

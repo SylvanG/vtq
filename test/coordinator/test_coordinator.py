@@ -2,14 +2,17 @@ import unittest
 import time
 import concurrent.futures
 import uuid
-import peewee
 from vtq import workspace
+from vtq import model
 from vtq.coordinator.notification_worker import SimpleNotificationWorker
 
 
 class CoordinatorTestCase(unittest.TestCase):
     def setUp(self):
-        notification_worker = SimpleNotificationWorker(interval=0.1)
+        self.notification_interval = 0.1
+        notification_worker = SimpleNotificationWorker(
+            interval=self.notification_interval
+        )
         ws = workspace.MemoryWorkspace(notificaiton_worker=notification_worker)
         ws.init()
         ws.flush_all()
@@ -24,8 +27,6 @@ class CoordinatorTestCase(unittest.TestCase):
         self.ws.notification_worker.stop()
 
     def _enable_model_debug_logging(self):
-        from vtq import model
-
         model.enable_debug_logging()
 
     def _add_vq(self, name="default", **kwargs):
@@ -37,9 +38,22 @@ class CoordinatorTestCase(unittest.TestCase):
                 self.name = name
                 self.db = db
                 self.task_cls = task_cls
+                self.queued_at_start = 0
+                self.ordered_queued_at = False
 
+            def enable_ordered_queued_at(self, start=1):
+                self.ordered_queued_at = True
+                self.queued_at_start = start
+
+            def disable_ordered_queued_at(self):
+                self.ordered_queued_at = False
+
+            @model.retry_sqlite_db_table_locked
             def add_task(self, **kwargs) -> str:
                 kwargs.setdefault("data", b"data")
+                if self.ordered_queued_at:
+                    kwargs.setdefault("queued_at", self.queued_at_start)
+                    self.queued_at_start += 1
                 with self.db:
                     task = self.task_cls.create(vqueue_name=name, **kwargs)
                 return str(task.id)
@@ -75,8 +89,9 @@ class CoordinatorTestCase(unittest.TestCase):
         assert set(self._get_ids(tasks)) == set((task_id2, task_id3))
 
     def test_receive_check_task_vq_hidden(self):
+        ts = time.time()
         vq = self._add_vq("default")
-        vq_hidden = self._add_vq("hidden", hidden=True)
+        vq_hidden = self._add_vq("hidden", visible_at=ts + 100)
 
         _ = vq_hidden.add_task()
         task_id2 = vq.add_task()
@@ -96,9 +111,9 @@ class CoordinatorTestCase(unittest.TestCase):
 
     def test_receive_task_enqueue_time(self):
         vq = self._add_vq()
-        task_id1 = vq.add_task()
-        task_id2 = vq.add_task()
-        task_id3 = vq.add_task()
+        task_id1 = vq.add_task(queued_at=1)
+        task_id2 = vq.add_task(queued_at=2)
+        task_id3 = vq.add_task(queued_at=3)
 
         tasks = self.coordinator.receive(max_number=3)
         assert len(tasks) == 3
@@ -115,13 +130,141 @@ class CoordinatorTestCase(unittest.TestCase):
         assert len(tasks) == 2
         assert self._get_ids(tasks) == [task_id2, task_id1]
 
-    def test_receive_hybrid(self):
-        vq = self._add_vq("default", priority=50)
-        vq_hidden = self._add_vq("hidden", priority=50, hidden=True)
-        vq_high_priority = self._add_vq("high", priority=70)
+    def test_receive_rate_limit_mutex(self):
+        vq = self._add_vq()
+        vq_mutex_1 = self._add_vq("vq_mutex_1", rate_limit_type="MUTEX")
+        vq_mutex_2 = self._add_vq("vq_mutex_2", rate_limit_type="MUTEX")
 
+        task_id1 = vq.add_task(queued_at=1)
+        task_id2 = vq_mutex_1.add_task(queued_at=2)
+        task_id3 = vq_mutex_2.add_task(queued_at=3)
+        _ = vq_mutex_2.add_task(queued_at=4)
+        _ = vq_mutex_1.add_task(queued_at=5)
+        task_id6 = vq.add_task(queued_at=6)
+
+        tasks = self.coordinator.receive(max_number=6)
+        assert len(tasks) == 4, len(tasks)
+        assert self._get_ids(tasks) == [task_id1, task_id2, task_id3, task_id6]
+
+    def test_receive_load_balancing(self):
+        vq = self._add_vq("vq", bucket_weight=100)
+        vq_lb = self._add_vq("vq_lb", bucket_name="vq_lb", bucket_weight=200)
+
+        vq_task_ids = set()
+        vq_lb_task_ids = set()
+        for _ in range(100):
+            vq_task_ids.add(vq.add_task())
+            vq_lb_task_ids.add(vq_lb.add_task())
+
+        task_ids = set(
+            (self.coordinator.receive(max_number=1)[0].id for _ in range(100))
+        )
+        vq_tasks_num = len(task_ids.intersection(vq_task_ids))
+        assert abs(vq_tasks_num - 33) <= 20, vq_tasks_num
+
+    def test_receive_load_balancing_batch_query(self):
+        vq = self._add_vq("vq", bucket_weight=100)
+        vq_lb = self._add_vq("vq_lb", bucket_name="vq_lb", bucket_weight=200)
+
+        vq_task_ids = set()
+        vq_lb_task_ids = set()
+        for _ in range(100):
+            vq_task_ids.add(vq.add_task())
+            vq_lb_task_ids.add(vq_lb.add_task())
+
+        task_ids = set((task.id for task in self.coordinator.receive(max_number=100)))
+        assert len(task_ids) == 100, len(task_ids)
+        vq_tasks_num = len(task_ids.intersection(vq_task_ids))
+        assert abs(vq_tasks_num - 33) <= 20, vq_tasks_num
+
+    def test_receive_load_balancing_bucket_weight_0(self):
+        vq = self._add_vq("vq", bucket_weight=100)
+        vq_lb = self._add_vq("vq_lb", bucket_name="vq_lb", bucket_weight=0)
+
+        vq_task_ids = set()
+        vq_lb_task_ids = set()
+        for _ in range(100):
+            vq_task_ids.add(vq.add_task())
+            vq_lb_task_ids.add(vq_lb.add_task())
+
+        task_ids = set((task.id for task in self.coordinator.receive(max_number=100)))
+        assert len(task_ids) == 100
+        vq_tasks_num = len(task_ids.intersection(vq_task_ids))
+        assert vq_tasks_num == 100
+
+    def test_receive_load_balancing_multiple_vqs_in_one_bucket(self):
+        vq = self._add_vq("vq", bucket_weight=100)
+        vq_lb = self._add_vq("vq_lb", bucket_name="vq_lb", bucket_weight=200)
+        vq_lb2 = self._add_vq("vq_lb2", bucket_name="vq_lb", bucket_weight=200)
+
+        vq_task_ids = set()
+        vq_lb_task_ids = set()
+        vq_lb2_task_ids = set()
+        queued_at = 0
+        for _ in range(100):
+            queued_at += 1
+            vq_task_ids.add(vq.add_task(queued_at=queued_at))
+            queued_at += 1
+            vq_lb_task_ids.add(vq_lb.add_task(queued_at=queued_at))
+            queued_at += 1
+            vq_lb2_task_ids.add(vq_lb2.add_task(queued_at=queued_at))
+
+        task_ids = set((task.id for task in self.coordinator.receive(max_number=100)))
+        assert len(task_ids) == 100
+        vq_tasks_num = len(task_ids.intersection(vq_task_ids))
+        assert abs(vq_tasks_num - 33) <= 20, vq_tasks_num
+
+        vq_lb_tasks_num = len(task_ids.intersection(vq_lb_task_ids))
+        vq_lb2_tasks_num = len(task_ids.intersection(vq_lb2_task_ids))
+
+        assert abs(vq_lb2_tasks_num - vq_lb_tasks_num) <= 1, (
+            vq_lb_tasks_num,
+            vq_lb2_tasks_num,
+        )
+
+    def test_receive_load_balancing_multiple_buckets(self):
+        vq = self._add_vq("vq", bucket_weight=100)
+        vq_lb = self._add_vq("vq_lb", bucket_name="vq_lb", bucket_weight=200)
+        vq_lb2 = self._add_vq("vq_lb2", bucket_name="vq_lb2", bucket_weight=100)
+
+        vq_task_ids = set()
+        vq_lb_task_ids = set()
+        vq_lb2_task_ids = set()
+        for _ in range(100):
+            vq_task_ids.add(vq.add_task())
+            vq_lb_task_ids.add(vq_lb.add_task())
+            vq_lb2_task_ids.add(vq_lb2.add_task())
+
+        task_ids = set((task.id for task in self.coordinator.receive(max_number=100)))
+        assert len(task_ids) == 100
+        vq_tasks_num = len(task_ids.intersection(vq_task_ids))
+        assert abs(vq_tasks_num - 25) <= 20, vq_tasks_num
+
+        vq_lb2_tasks_num = len(task_ids.intersection(vq_lb2_task_ids))
+        assert abs(vq_lb2_tasks_num - 25) <= 20, vq_lb2_tasks_num
+
+    def test_receive_hybrid(self):
         ts = time.time()
 
+        vq = self._add_vq("default", priority=50)
+        vq_hidden = self._add_vq("hidden", priority=50, visible_at=ts + 100)
+        vq_high_priority = self._add_vq("high", priority=70)
+        vq_mutex = self._add_vq("vq_mutex", priority=50, rate_limit_type="MUTEX")
+        vq_lb1 = self._add_vq(
+            "vq_lb1", priority=60, bucket_name="lb1", bucket_weight=100
+        )
+        vq_lb2 = self._add_vq(
+            "vq_lb2", priority=60, bucket_name="lb2", bucket_weight=100
+        )
+        vq_lb3 = self._add_vq(
+            "vq_lb3",
+            priority=60,
+            bucket_name="lb3",
+            bucket_weight=100,
+            rate_limit_type="MUTEX",
+        )
+
+        vq_high_priority.enable_ordered_queued_at(1)
         _ = vq_high_priority.add_task(priority=30, visible_at=ts + 100)
         p2 = vq_high_priority.add_task(priority=30, visible_at=ts - 100)
         p3 = vq_high_priority.add_task(priority=30, visible_at=ts)
@@ -129,6 +272,7 @@ class CoordinatorTestCase(unittest.TestCase):
         p5 = vq_high_priority.add_task(priority=70, visible_at=ts)
         p6 = vq_high_priority.add_task(priority=70, visible_at=ts - 100)
 
+        vq_hidden.enable_ordered_queued_at(11)
         _ = vq_hidden.add_task(priority=30, visible_at=ts + 100)
         _ = vq_hidden.add_task(priority=30, visible_at=ts - 100)
         _ = vq_hidden.add_task(priority=30, visible_at=ts)
@@ -136,6 +280,7 @@ class CoordinatorTestCase(unittest.TestCase):
         _ = vq_hidden.add_task(priority=70, visible_at=ts)
         _ = vq_hidden.add_task(priority=70, visible_at=ts - 100)
 
+        vq.enable_ordered_queued_at(21)
         _ = vq.add_task(priority=30, visible_at=ts + 100)
         t2 = vq.add_task(priority=30, visible_at=ts - 100)
         t3 = vq.add_task(priority=30, visible_at=ts)
@@ -143,13 +288,53 @@ class CoordinatorTestCase(unittest.TestCase):
         t5 = vq.add_task(priority=70, visible_at=ts)
         t6 = vq.add_task(priority=70, visible_at=ts - 100)
 
-        tasks = self.coordinator.receive(max_number=3 * 6)
-        assert len(tasks) == 8
-        assert self._get_ids(tasks) == [p5, p6, p2, p3, t5, t6, t2, t3]
+        vq_mutex.enable_ordered_queued_at(31)
+        m = [
+            vq_mutex.add_task(priority=30, visible_at=ts + 100),
+            vq_mutex.add_task(priority=30, visible_at=ts - 100),
+            vq_mutex.add_task(priority=30, visible_at=ts),
+            vq_mutex.add_task(priority=70, visible_at=ts + 100),
+            vq_mutex.add_task(priority=70, visible_at=ts),
+            vq_mutex.add_task(priority=70, visible_at=ts - 100),
+        ]
 
-    @unittest.skip
-    def test_receive_vq_bucket(self):
-        pass
+        vq_lb1.enable_ordered_queued_at(41)
+        lb1 = [
+            vq_lb1.add_task(priority=30, visible_at=ts + 100),
+            vq_lb1.add_task(priority=30, visible_at=ts - 100),
+            vq_lb1.add_task(priority=30, visible_at=ts),
+            vq_lb1.add_task(priority=70, visible_at=ts + 100),
+            vq_lb1.add_task(priority=70, visible_at=ts),
+            vq_lb1.add_task(priority=70, visible_at=ts - 100),
+        ]
+
+        vq_lb2.enable_ordered_queued_at(51)
+        lb2 = [
+            vq_lb2.add_task(priority=30, visible_at=ts + 100),
+            vq_lb2.add_task(priority=30, visible_at=ts - 100),
+            vq_lb2.add_task(priority=30, visible_at=ts),
+            vq_lb2.add_task(priority=70, visible_at=ts + 100),
+            vq_lb2.add_task(priority=70, visible_at=ts),
+            vq_lb2.add_task(priority=70, visible_at=ts - 100),
+        ]
+
+        vq_lb3.enable_ordered_queued_at(61)
+        lb3 = [
+            vq_lb3.add_task(priority=30, visible_at=ts + 100),
+            vq_lb3.add_task(priority=30, visible_at=ts - 100),
+            vq_lb3.add_task(priority=30, visible_at=ts),
+            vq_lb3.add_task(priority=70, visible_at=ts + 100),
+            vq_lb3.add_task(priority=70, visible_at=ts),
+            vq_lb3.add_task(priority=70, visible_at=ts - 100),
+        ]
+
+        tasks = self.coordinator.receive(max_number=7 * 6)
+        assert len(tasks) == 4 + 9 + 5
+        assert self._get_ids(tasks)[:4] == [p5, p6, p2, p3]
+        assert self._get_ids(tasks)[-5:] == [t5, t6, m[4], t2, t3]
+        assert self._get_ids(tasks)[4:8] == [lb1[4], lb1[5], lb2[4], lb2[5]]
+        assert self._get_ids(tasks)[9:13] == [lb1[1], lb1[2], lb2[1], lb2[2]]
+        assert self._get_ids(tasks)[8] == lb3[4]
 
     def test_ack(self):
         vq = self._add_vq()
@@ -335,39 +520,8 @@ class CoordinatorTestCase(unittest.TestCase):
 
             return wrap
 
-        def raw_ack(task_id):
-            id_bytes = uuid.UUID(task_id).bytes
-            # For a connection context without a transaction, use Database.connection_context().
-            # `with self.db:` is using execution context, where a transaction is used, which will have a BEGIN before executing the following SQL and potentially cause more database lock operation errors (even if the execution is not timeout and total time is less than 0.03s)
-            with self.db.connection_context():
-                ts = int(time.time() * 1000)
-                c = self.db.execute_sql(
-                    'SELECT "t1"."id", "t1"."status" FROM "default_task" AS "t1" WHERE ("t1"."id" = ?) LIMIT ?',
-                    [id_bytes, 1],
-                )
-                c.fetchone()
-                c.close()
-
-                c = self.db.execute_sql(
-                    'UPDATE "default_task" SET "visible_at" = ?, "status" = ?, "ended_at" = ?, "updated_at" = ? WHERE ("default_task"."id" = ?)',
-                    [2147483647000, 100, ts, ts, id_bytes],
-                )
-                c.close()
-                return c.rowcount
-
-        with self.subTest("ack"):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                list(executor.map(ack_wrap(self.coordinator.ack), q))
-
-        with self.subTest("raw_ack"):
-            assert (
-                self.db._max_connections > 1
-            ), "single connection pool will block threads working concurrently"
-            with self.assertRaisesRegex(
-                peewee.OperationalError, "database table is locked: default_task"
-            ):
-                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                    list(executor.map(ack_wrap(raw_ack), q))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(ack_wrap(self.coordinator.ack), q))
 
     def test_multithread_retry(self):
         vq = self._add_vq()
@@ -395,13 +549,26 @@ class CoordinatorTestCase(unittest.TestCase):
                 print(e)
                 raise
             else:
-                assert tasks
+                assert tasks, "no task received"
+                assert len(tasks) == 1, "received more than 1 task"
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(block_receive)
             time.sleep(0.1)
             vq.add_task()
             assert not future.exception(), future.exception()
+
+    def test_receive_block_timeout(self):
+        tasks = self.coordinator.receive(
+            wait_time_seconds=min(self.notification_interval / 2, 0.1)
+        )
+        assert not tasks
+
+    def test_receive_block_timeout2(self):
+        tasks = self.coordinator.receive(
+            wait_time_seconds=self.notification_interval + 0.1
+        )
+        assert not tasks
 
     def test_receive_multiple_block(self):
         vq = self._add_vq()
@@ -415,10 +582,10 @@ class CoordinatorTestCase(unittest.TestCase):
             else:
                 assert tasks
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            fs = [executor.submit(block_receive) for i in range(10)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            fs = [executor.submit(block_receive) for i in range(20)]
             time.sleep(0.1)
-            for i in range(11):
+            for _ in range(21):
                 vq.add_task()
             for future in concurrent.futures.as_completed(fs):
                 assert not future.exception(), future.exception()
