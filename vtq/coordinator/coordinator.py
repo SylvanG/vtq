@@ -87,6 +87,7 @@ class Coordinator(task_queue.TaskQueue):
         # TODO: add load balancing option
         return True
 
+    @retry_sqlite_db_table_locked
     def enqueue(
         self,
         task_data: bytes,
