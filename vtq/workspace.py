@@ -20,6 +20,10 @@ class Workspace(abc.ABC):
         """Do all the initialization work in the workspace"""
 
     @abstractmethod
+    def close(self):
+        """Stop all running processes and close all resources"""
+
+    @abstractmethod
     def flush_all(self):
         """Clear all data in the workspace"""
 
@@ -66,6 +70,9 @@ class DefaultWorkspace(Workspace):
 
         with self.database:
             self.database.create_tables([vq_cls, task_cls, task_error_cls])
+
+        # init coordinator
+        self.coordinator
 
     def flush_all(self):
         """Clear all data in the workspace"""
