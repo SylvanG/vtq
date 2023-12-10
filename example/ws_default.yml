@@ -1,0 +1,24 @@
+# Default to priority 50
+vqueues: []
+buckets: []
+
+# Specify the VQueue priority for the VQueues and buckets
+priorities:
+  - priority: 100
+    vqueues:
+      - name: "*vq_special*"
+    buckets:
+      - name: "bucket_special_x"
+        weight: 30
+        vqueues:
+          - name: "vq_special_x"
+  - priority: 30
+    vqueues:
+      - name: "low_priority_vq"
+
+rate_limiters:
+  - desc: "Mutex rate limit for VQs"
+    name: "mutex_{vqueue_name}"
+    type: Mutex
+    vqueues:
+      - name: "vq_mutex_*"
