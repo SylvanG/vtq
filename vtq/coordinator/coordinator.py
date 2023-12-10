@@ -503,16 +503,25 @@ class Coordinator(task_queue.TaskQueue):
                 ],
             )
 
-    def _update_multiple_for_confirming[T: model.Task](self, tasks: list[T]) -> int:
+    def _update_multiple_for_confirming[T: model.Task](
+        self,
+        tasks: list[T],
+        confirming_num: int,
+        current_ts: float,
+    ) -> int:
         """Assume this is done in the context of pessimitic lock of the task rows. The confirmation should be finished in one minute by default."""
         if not tasks:
             return
 
-        current_ts = time.time()
-
-        for task in tasks:
+        for task in tasks[:confirming_num]:
             task.visible_at = current_ts + task.vqueue.visibility_timeout
             task.status = task_mod.TaskStatus.PROCESSING.value
+            task.updated_at = current_ts
+
+        for task in tasks[confirming_num:]:
+            task.visible_at = 0
+            # This may cause the loss of information regarding the retrying status, reverting back to the unstarted status
+            task.status = task_mod.TaskStatus.UNSTARTED.value
             task.updated_at = current_ts
 
         # TODO: check they are in confirming status and invisible status
@@ -612,8 +621,6 @@ class Coordinator(task_queue.TaskQueue):
                 f"rate limiter resource {rate_limiter} access with no count for {vqueue_name}"
             )
 
-        tasks = tasks[: access.count]
-
         try:
             self._confirm_tasks_after_rate_limit(tasks, vqueue_name, access)
         except Exception as e:
@@ -627,23 +634,28 @@ class Coordinator(task_queue.TaskQueue):
             self._release_rate_limit(vqueue_name, access.count, rate_limiter)
             return []
         else:
-            return tasks
+            return tasks[: access.count]
 
     @retry_sqlite_db_table_locked
     def _confirm_tasks_after_rate_limit(self, tasks, vqueue_name, access):
         with self._db:  # open a connection and a transaction
-            updated_count = self._update_multiple_for_confirming(tasks)
-            if updated_count < access.count:
+            current_ts = time.time()
+            updated_count = self._update_multiple_for_confirming(
+                tasks, confirming_num=access.count, current_ts=current_ts
+            )
+            if updated_count != len(tasks):
                 logger.info(
                     f"some tasks may be deleted during the confirming process in {vqueue_name}"
                 )
-                # TODO: release the count
                 raise NotImplementedError(
                     f"some tasks may be deleted during the confirming process in {vqueue_name}"
                 )
             if access.limit_reached:
                 self._hide_vqueue_for_rate_limit(
-                    vqueue_name, access.version, access.until
+                    vqueue_name,
+                    change_version=access.version,
+                    visible_at=access.until,
+                    current_ts=current_ts,
                 )
 
     # ---- End: Receive multiple ---
@@ -735,12 +747,16 @@ class Coordinator(task_queue.TaskQueue):
             )
 
     def _hide_vqueue_for_rate_limit(
-        self, vqueue_name: str, change_version: int, visible_at: float
+        self,
+        vqueue_name: str,
+        change_version: int,
+        visible_at: float,
+        current_ts: float | None = None,
     ):
         updated = (
             self._vq_cls.update(
                 visible_at=visible_at,
-                updated_at=time.time(),
+                updated_at=current_ts or time.time(),
                 rate_limit_ver=change_version,
             )
             .where(
