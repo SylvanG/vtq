@@ -90,7 +90,8 @@ class DefaultWorkspace(Workspace):
 
     @property
     def configuration_fetcher(self) -> configuration.ConfigurationFetcher:
-        return configuration.ConfigurationFetcher(workspace=self.name)
+        loader = configuration.ConfigurationDataLoader(workspace=self.name)
+        return configuration.ConfigurationFetcher(loader=loader)
 
     @property
     def channel(self) -> channel.Channel | None:

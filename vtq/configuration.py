@@ -30,7 +30,8 @@ class VQueueConfiguration:
 
 
 class ConfigurationDataLoader:
-    def __init__(self, configuration_dir: Path | None = None) -> None:
+    def __init__(self, workspace, configuration_dir: Path | None = None) -> None:
+        self._workspace = workspace
         self._configuration_dir = configuration_dir or Path.cwd()
 
     def load(self) -> dict | None:
@@ -45,8 +46,7 @@ class ConfigurationDataLoader:
 
 
 class ConfigurationFetcher:
-    def __init__(self, workspace="default", loader=ConfigurationDataLoader()):
-        self._workspace = workspace
+    def __init__(self, loader: ConfigurationDataLoader):
         self._loader = loader
         self._rate_limiter_config_factory: Callable[
             [str], RateLimit | None
