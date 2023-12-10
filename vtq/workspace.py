@@ -78,6 +78,10 @@ class DefaultWorkspace(Workspace):
             task_cls.truncate_table()
             vq_cls.truncate_table()
 
+    def close(self):
+        """Stop all running processes and close all resources"""
+        self.notification_worker.stop()
+
     @property
     def database(self) -> peewee.Database:
         if not self._db:
