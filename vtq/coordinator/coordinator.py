@@ -1,20 +1,19 @@
-import contextlib
 import collections
+import contextlib
 import functools
 import itertools
 import logging
 import threading
 import time
-from collections.abc import Iterable, Callable
+from collections.abc import Callable, Iterable
 
 import peewee
 
-from vtq import channel, configuration, model, task_queue
-from vtq.coordinator import common
-from vtq.coordinator import notification_worker, waiting_barrier
+from vtq import channel, configuration, model, rate_limit, task_queue
+from vtq.coordinator import common, notification_worker, waiting_barrier
 from vtq.coordinator import task as task_mod
+from vtq.coordinator.task import TaskStatus
 from vtq.task import Task
-from vtq import rate_limit
 
 logger = logging.getLogger(name=__name__)
 
@@ -783,6 +782,7 @@ class Coordinator(task_queue.TaskQueue):
                 self._task_cls.status,
                 self._task_cls.vqueue_name.alias("vqueue_name"),
                 self._task_cls.updated_at,
+                self._task_cls.retries,  # used for retry and nack
                 self._vq_cls.rate_limit_type.alias("vqueue_rate_limit_type"),
                 self._vq_cls.updated_at.alias("vqueue_updated_at"),
             )
@@ -796,9 +796,10 @@ class Coordinator(task_queue.TaskQueue):
     def _update_task_for_ack(
         self,
         task: model.Task,
-        status=100,
+        status=TaskStatus.SUCCEEDED.value,
         visible_at=_INVISIBLE_TIMESTAMP_SECONDS,
         error_message: str | None = None,
+        retries: int | None = None,
         release_time_based_rate_limiter=False,
     ) -> bool:
         """Update the task for ack-related operations (ACK/NACK/REQUEUE/RETRY).
@@ -839,6 +840,8 @@ class Coordinator(task_queue.TaskQueue):
             )
             if visible_at == _INVISIBLE_TIMESTAMP_SECONDS:
                 data["ended_at"] = current_ts
+            if retries is not None:
+                data["retries"] = retries
 
             updated = (
                 task_cls.update(**data)
@@ -857,6 +860,7 @@ class Coordinator(task_queue.TaskQueue):
                     task_id=task.id,
                     err_msg=error_message,
                     happended_at=current_ts,
+                    retry_count=task.retries,
                 )
 
             if is_mutex_limiter:
@@ -906,7 +910,9 @@ class Coordinator(task_queue.TaskQueue):
                 return False
 
             return self._update_task_for_ack(
-                task, status=101, error_message=error_message
+                task,
+                status=TaskStatus.FAILED.value,
+                error_message=error_message,
             )
 
     def requeue(self, task_id: str) -> bool:
@@ -919,7 +925,9 @@ class Coordinator(task_queue.TaskQueue):
             if not task.is_wip():
                 return False
 
-            updated = self._update_task_for_ack(task, status=0, visible_at=0)
+            updated = self._update_task_for_ack(
+                task, status=TaskStatus.UNSTARTED.value, visible_at=0
+            )
 
         if updated and self._channel:
             self._channel.send_task(str(task.id), task.visible_at)
@@ -933,14 +941,18 @@ class Coordinator(task_queue.TaskQueue):
             task = self._get_task_for_ack(task_id)
             if not task:
                 return False
-            if task.is_pending():
+            if task.is_unstarted() and task.retries > 0:
                 return True
             if not task.is_wip():
                 return False
 
             visible_at = time.time() + delay_millis / 1000.0 if delay_millis else 0
             updated = self._update_task_for_ack(
-                task, status=1, visible_at=visible_at, error_message=error_message
+                task,
+                status=TaskStatus.UNSTARTED.value,
+                visible_at=visible_at,
+                error_message=error_message,
+                retries=task.retries + 1,
             )
 
         if updated and self._channel:

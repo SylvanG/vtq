@@ -53,12 +53,14 @@ class Task(BaseModel):
     ended_at = InitMilliTimeStampField()
     priority = peewee.SmallIntegerField(default=50)
     updated_at = CurrrentMilliTimeStampField()
+    retries = peewee.SmallIntegerField(default=0)
 
 
 class TaskError(BaseModel):
     task = peewee.ForeignKeyField(Task, backref="errors")
     happened_at = CurrrentMilliTimeStampField()
     err_msg = peewee.CharField(max_length=80 * 100)
+    retry_count = peewee.SmallIntegerField()
 
     class Meta:
         primary_key = peewee.CompositeKey("task", "happened_at")
@@ -174,7 +176,7 @@ def enable_debug_logging(disable_handler=False):
         peewee.logger.addHandler(logging.StreamHandler())
 
 
-def retry_sqlite_db_table_locked(f, logger=None):
+def retry_sqlite_db_table_locked[F](f: F, logger=None) -> F:
     logger = logger or logging.getLogger("RetrySqliteDbTableLocked")
 
     @functools.wraps(f)
