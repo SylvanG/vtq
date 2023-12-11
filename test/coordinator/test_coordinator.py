@@ -76,6 +76,18 @@ class CoordinatorTestCase(unittest.TestCase):
             assert len(task_models) <= 1
             return task_models[0] if task_models else None
 
+    def test_receive_data(self):
+        vq = self._add_vq()
+        data = b"mydata"
+        task_id = vq.add_task(data=data)
+        tasks = self.coordinator.receive(max_number=1)
+        assert len(tasks) == 1
+        assert self._get_ids(tasks)[0] == task_id
+
+        task = tasks[0]
+        assert task.data == data
+        assert task.meta.retries == 0
+
     def test_receive_check_task_visible_at(self):
         vq = self._add_vq()
 

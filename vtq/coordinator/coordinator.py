@@ -13,7 +13,7 @@ from vtq import channel, configuration, model, rate_limit, task_queue
 from vtq.coordinator import common, notification_worker, waiting_barrier
 from vtq.coordinator import task as task_mod
 from vtq.coordinator.task import TaskStatus
-from vtq.task import Task
+from vtq.task import Task, TaskMeta
 
 logger = logging.getLogger(name=__name__)
 
@@ -214,6 +214,7 @@ class Coordinator(task_queue.TaskQueue):
             priority = task_cls.priority  # TODO: for debug, remove it later
             updated_at = task_cls.updated_at
             queued_at = task_cls.queued_at
+            retries = task_cls.retries
             vqueue_priority = vq_cls.priority.alias("vqueue_priority")
             vqueue_updated_at = vq_cls.updated_at.alias("vqueue_updated_at")
             vqueue_visibility_timeout = vq_cls.visibility_timeout.alias(
@@ -247,6 +248,7 @@ class Coordinator(task_queue.TaskQueue):
                 schema.priority,
                 schema.updated_at,
                 schema.queued_at,
+                schema.retries,
                 schema.vqueue_priority,
                 schema.vqueue_updated_at,
                 schema.vqueue_visibility_timeout,
@@ -273,6 +275,7 @@ class Coordinator(task_queue.TaskQueue):
             schema.priority,
             schema.updated_at,
             schema.queued_at,
+            schema.retries,
             schema.vqueue_priority,
             schema.vqueue_updated_at,
             schema.vqueue_visibility_timeout,
@@ -312,6 +315,7 @@ class Coordinator(task_queue.TaskQueue):
         )
 
         # Select a limited number of tasks in the order of task priority, enqueue time, either as a whole or by bucket.
+        # TODO: refator to select the data in the final step
         schema = filtered_task_subquery.c
         task_query = task_cls.select(
             schema.id,
@@ -319,6 +323,7 @@ class Coordinator(task_queue.TaskQueue):
             schema.vqueue_name,
             schema.priority,  # TODO: for debug, remove it later
             schema.queued_at,  # TODO: for debug, remove it later
+            schema.retries,
             schema.updated_at,
             schema.vqueue_updated_at,
             schema.vqueue_visibility_timeout,
@@ -419,7 +424,7 @@ class Coordinator(task_queue.TaskQueue):
             self._update_multiple(confirmable_tasks + remaining)
 
         return [
-            Task(str(task.id), task.data)
+            Task(str(task.id), task.data, TaskMeta(retries=task.retries))
             for task in sorted(
                 confirmable_tasks + self._confirm_with_rate_limit(remaining),
                 key=lambda t: (-t.priority, t.queued_at),
