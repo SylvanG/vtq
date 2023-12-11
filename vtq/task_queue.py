@@ -57,11 +57,7 @@ class TaskQueue(abc.ABC):
 
     @abstractmethod
     def retry(
-        self,
-        task_id: str,
-        delay_millis: int = 0,
-        error_message: str = "",
-        task_data: bytes | None = None,
+        self, task_id: str, delay_millis: int = 0, error_message: str = ""
     ) -> bool:
         """Requeue retry-able task. This will mark the task with retry status.
 

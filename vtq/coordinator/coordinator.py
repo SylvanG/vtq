@@ -927,15 +927,8 @@ class Coordinator(task_queue.TaskQueue):
         return updated
 
     def retry(
-        self,
-        task_id: str,
-        delay_millis: int = 0,
-        error_message: str = "",
-        task_data: bytes | None = None,
+        self, task_id: str, delay_millis: int = 0, error_message: str = ""
     ) -> bool:
-        if task_data:
-            raise NotImplementedError
-
         with self._db.connection_context():
             task = self._get_task_for_ack(task_id)
             if not task:
