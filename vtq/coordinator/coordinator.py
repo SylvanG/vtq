@@ -114,7 +114,7 @@ class Coordinator(task_queue.TaskQueue):
 
         if self._channel:
             self._channel.send_task(str(task.id), visible_at)
-        return task.id
+        return task.id.hex
 
     def _enqueue_task_with_new_vq(
         self, task_data, vqueue_name, priority, visible_at
@@ -428,7 +428,7 @@ class Coordinator(task_queue.TaskQueue):
             self._update_multiple(confirmable_tasks + remaining)
 
         return [
-            Task(str(task.id), task.data, TaskMeta(retries=task.retries))
+            Task(task.id.hex, task.data, TaskMeta(retries=task.retries))
             for task in sorted(
                 confirmable_tasks + self._confirm_with_rate_limit(remaining),
                 key=lambda t: (-t.priority, t.queued_at),

@@ -13,7 +13,7 @@ CurrrentMilliTimeStampField = functools.partial(peewee.TimestampField, resolutio
 
 class BinaryUUIDField(peewee.BinaryUUIDField):
     def db_value(self, value):
-        if isinstance(value, str) and len(value) == 36:
+        if isinstance(value, str) and len(value) == 32:
             return self._constructor(uuid.UUID(value).bytes)
         return super().db_value(value)
 

@@ -56,15 +56,15 @@ class CoordinatorTestCase(unittest.TestCase):
                     self.queued_at_start += 1
                 with self.db:
                     task = self.task_cls.create(vqueue_name=name, **kwargs)
-                return str(task.id)
+                return task.id.hex
 
         return VQ(name, self.db, self.task_cls)
 
     def _get_ids(self, tasks):
-        return list(map(lambda t: str(t.id), tasks))
+        return list(map(lambda t: t.id, tasks))
 
     def _new_task_id(self):
-        return str(uuid.uuid4())
+        return uuid.uuid4().hex
 
     def _get_task_model(self, task_id):
         with self.db:
@@ -75,6 +75,11 @@ class CoordinatorTestCase(unittest.TestCase):
             )
             assert len(task_models) <= 1
             return task_models[0] if task_models else None
+
+    def test_enqueue(self):
+        task_id = self.coordinator.enqueue(b"123")
+        assert task_id
+        assert isinstance(task_id, str)
 
     def test_receive_data(self):
         vq = self._add_vq()
