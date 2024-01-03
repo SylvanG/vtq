@@ -15,6 +15,8 @@ from vtq.coordinator import task as task_mod
 from vtq.coordinator.task import TaskStatus
 from vtq.task import Task, TaskMeta
 
+from .receive_future import ReceiveFuture
+
 logger = logging.getLogger(name=__name__)
 
 _INVISIBLE_TIMESTAMP_SECONDS = 2**31 - 1
@@ -135,6 +137,11 @@ class Coordinator(task_queue.TaskQueue):
                 visible_at=visible_at,
             )
         return task
+
+    def block_receive(
+        self, max_number: int = 1, wait_time_seconds: float | None = None
+    ) -> ReceiveFuture:
+        ...
 
     def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
         """Get tasks from the SQL table, then update the VQ `visible_at` status by the result from the Rate Limit."""
