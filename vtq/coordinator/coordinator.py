@@ -55,9 +55,7 @@ class Coordinator(task_queue.TaskQueue):
         self._receive_waiting_barrier = receive_waiting_barrier
         self._available_task_event = threading.Event()
         self._task_notification_worker = task_notification_worker
-        task_notification_worker.connect_to_available_task(
-            self._available_task_event.set
-        )
+        self._is_notification_worker_connected = False
 
     @property
     def _support_select_for_update(self) -> bool:
@@ -167,6 +165,12 @@ class Coordinator(task_queue.TaskQueue):
                 return self._block_receive(wait_until_seconds, max_number=max_number)
 
     def _block_receive(self, wait_until_seconds: int, max_number=1) -> list[Task]:
+        if not self._is_notification_worker_connected:
+            self._task_notification_worker.connect_to_available_task(
+                self._available_task_event.set
+            )
+            self._is_notification_worker_connected = True
+
         event = self._available_task_event
 
         # TODO: set maximum loop and log for exceeding the loop number
