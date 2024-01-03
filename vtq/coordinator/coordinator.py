@@ -15,7 +15,7 @@ from vtq.coordinator import task as task_mod
 from vtq.coordinator.task import TaskStatus
 from vtq.task import Task, TaskMeta
 
-from .receive_future import ReceiveFuture
+from .waiting_queue import ReceiveFuture, SimpleReceiveFuture, WaitingQueueFactory
 
 logger = logging.getLogger(name=__name__)
 
@@ -37,6 +37,7 @@ class Coordinator(task_queue.TaskQueue):
         task_error_cls: type[model.TaskError],
         config_fetcher: configuration.ConfigurationFetcher,
         receive_waiting_barrier: waiting_barrier.WaitingBarrier,
+        waiting_queue_factory: WaitingQueueFactory,
         task_notification_worker: notification_worker.NotificationWorker,
         rate_limiter_factory: rate_limit.RateLimiterFactory | None = None,
         channel: channel.Channel | None = None,
@@ -58,6 +59,12 @@ class Coordinator(task_queue.TaskQueue):
         self._available_task_event = threading.Event()
         self._task_notification_worker = task_notification_worker
         self._is_notification_worker_connected = False
+
+        self._waiting_queue = waiting_queue_factory(
+            self._fetch,
+            task_notification_worker.connect_to_available_task,
+            default_factory=list,
+        )  # FIXME: lazy start notification worker? add a start method
 
     @property
     def _support_select_for_update(self) -> bool:
@@ -140,7 +147,14 @@ class Coordinator(task_queue.TaskQueue):
 
     def block_receive(
         self, max_number: int = 1, wait_time_seconds: float | None = None
-    ) -> ReceiveFuture:
+    ) -> ReceiveFuture[list[Task]]:
+        if self._waiting_queue.empty():
+            if tasks := self._fetch(max_number):
+                return SimpleReceiveFuture(tasks)
+
+        return self._waiting_queue.wait(wait_time_seconds, max_number=max_number)
+
+    def _fetch(self, max_number: int) -> list[Task]:
         ...
 
     def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
