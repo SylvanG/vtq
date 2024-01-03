@@ -55,6 +55,10 @@ class Task(BaseModel):
     updated_at = CurrrentMilliTimeStampField()
     retries = peewee.SmallIntegerField(default=0)
 
+    @property
+    def id_str(self):
+        return self.id.hex  # type: ignore
+
 
 class TaskError(BaseModel):
     task = peewee.ForeignKeyField(Task, backref="errors")

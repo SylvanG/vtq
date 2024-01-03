@@ -56,7 +56,7 @@ class CoordinatorTestCase(unittest.TestCase):
                     self.queued_at_start += 1
                 with self.db:
                     task = self.task_cls.create(vqueue_name=name, **kwargs)
-                return task.id.hex
+                return task.id_str
 
         return VQ(name, self.db, self.task_cls)
 
