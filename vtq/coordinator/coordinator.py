@@ -155,63 +155,13 @@ class Coordinator(task_queue.TaskQueue):
         return self._waiting_queue.wait(wait_time_seconds, max_number=max_number)
 
     def _fetch(self, max_number: int) -> list[Task]:
-        ...
+        return self._receive_mutliple(max_number)
 
     def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
         """Get tasks from the SQL table, then update the VQ `visible_at` status by the result from the Rate Limit."""
-        if not self._receive_waiting_barrier.is_clear:
-            if wait_time_seconds:
-                return self._block_receive_thread_safe(wait_time_seconds, max_number)
-            else:
-                return []
-
-        tasks: list[Task] = []
-        while len(tasks) < max_number:
-            sub_tasks = self._receive_mutliple(max_number - len(tasks))
-            if not sub_tasks:
-                if tasks or wait_time_seconds <= 0:
-                    return tasks
-                return self._block_receive_thread_safe(wait_time_seconds, max_number)
-            tasks.extend(sub_tasks)
-
-        return tasks
-
-    def _block_receive_thread_safe(
-        self, wait_time_seconds: int, max_number=1
-    ) -> list[Task]:
-        """Upon receiving tasks, we will promptly return them instead of engaging in multiple rounds to fulfill the max_number specified in the request. This is because that requests blocking here means that there are less tasks than the worker, so we are going to make requests return as soon as possible."""
-        wait_until_seconds = time.time() + wait_time_seconds
-        with self._receive_waiting_barrier.wait(wait_time_seconds) as rv:
-            if rv:
-                return self._block_receive(wait_until_seconds, max_number=max_number)
-
-    def _block_receive(self, wait_until_seconds: int, max_number=1) -> list[Task]:
-        if not self._is_notification_worker_connected:
-            self._task_notification_worker.connect_to_available_task(
-                self._available_task_event.set
-            )
-            self._is_notification_worker_connected = True
-
-        event = self._available_task_event
-
-        # TODO: set maximum loop and log for exceeding the loop number
-        while True:
-            # Prepare to listen to the notification (task add notify and delay task timer) before querying the table.
-            event.clear()
-
-            # query the table
-            tasks = self._receive_mutliple(max_number)
-            if tasks:
-                return tasks
-
-            if event.is_set():
-                # It's possible the new available task is taken by other process or service.
-                continue
-
-            # wait for the avaiable tasks
-            if not event.wait(timeout=wait_until_seconds - time.time()):
-                # timeout
-                return
+        if wait_time_seconds == 0:
+            return self._fetch(max_number)
+        return self.block_receive(max_number, wait_time_seconds).result()
 
     # ---- Receive one ---
     # TODO: modify it
