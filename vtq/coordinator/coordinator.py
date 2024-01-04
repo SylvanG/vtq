@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable
 import peewee
 
 from vtq import channel, configuration, model, rate_limit, task_queue
-from vtq.coordinator import common, notification_worker, waiting_barrier
+from vtq.coordinator import common, notification_worker
 from vtq.coordinator import task as task_mod
 from vtq.coordinator.task import TaskStatus
 from vtq.task import Task, TaskMeta
@@ -36,7 +36,6 @@ class Coordinator(task_queue.TaskQueue):
         task_cls: type[model.Task],
         task_error_cls: type[model.TaskError],
         config_fetcher: configuration.ConfigurationFetcher,
-        receive_waiting_barrier: waiting_barrier.WaitingBarrier,
         waiting_queue_factory: WaitingQueueFactory,
         task_notification_worker: notification_worker.NotificationWorker,
         rate_limiter_factory: rate_limit.RateLimiterFactory | None = None,
@@ -55,10 +54,8 @@ class Coordinator(task_queue.TaskQueue):
         self.rate_limit_acquire_error_handler: Callable[[], bool] | None = None
 
         self._receive_lock = threading.Lock()
-        self._receive_waiting_barrier = receive_waiting_barrier
         self._available_task_event = threading.Event()
         self._task_notification_worker = task_notification_worker
-        self._is_notification_worker_connected = False
 
         self._waiting_queue = waiting_queue_factory(
             self._fetch,

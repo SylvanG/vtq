@@ -5,7 +5,7 @@ from typing import Protocol
 import peewee
 
 from vtq import channel, configuration, coordinator, model
-from vtq.coordinator import notification_worker, waiting_barrier, simple_waiting_queue
+from vtq.coordinator import notification_worker, simple_waiting_queue
 
 
 class Workspace(abc.ABC):
@@ -130,7 +130,6 @@ class DefaultWorkspace(Workspace):
                 channel=self.channel,
                 task_notification_worker=self.notification_worker,
                 waiting_queue_factory=simple_waiting_queue.SimpleWaitingQueueFactory(),
-                receive_waiting_barrier=waiting_barrier.SimpleWaitingBarrier(),
             )
         return self._coordinator
 
