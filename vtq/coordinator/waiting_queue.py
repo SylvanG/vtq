@@ -40,10 +40,12 @@ class WaitingQueue[**P, R, D]:
         fetcher: Callable[P, R],
         notification_hook: NotificaitonHook,
         default_factory: Callable[[], D],
+        data_exists: Callable[[R], bool] = bool,
     ) -> None:
         self.fetcher = fetcher
         self.notification_hook = notification_hook
         self.default_factory = default_factory
+        self.data_exists = data_exists
 
     def wait(
         self,

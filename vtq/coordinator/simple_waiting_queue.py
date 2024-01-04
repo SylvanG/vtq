@@ -64,7 +64,7 @@ class SimpleWaitingQueue[**P, R, D](WaitingQueue[P, R, D]):
     def receive(self, proxy: ReceiveProxy[P, R, D]) -> R | D:
         with self._lock:
             if not self._waiting_queue:
-                if (data := self.fetcher(*proxy.args, **proxy.kwargs)) is not None:
+                if self.data_exists(data := self.fetcher(*proxy.args, **proxy.kwargs)):
                     return data
 
             self._waiting_queue.append(proxy)
@@ -89,7 +89,7 @@ class SimpleWaitingQueue[**P, R, D](WaitingQueue[P, R, D]):
 
                 assert self._waiting_queue[0] is proxy
 
-                if (data := self.fetcher(*proxy.args, **proxy.kwargs)) is not None:
+                if self.data_exists(data := self.fetcher(*proxy.args, **proxy.kwargs)):
                     self._waiting_queue.popleft()
                     self._notify_next()
                     return data
