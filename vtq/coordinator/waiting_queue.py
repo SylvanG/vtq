@@ -65,6 +65,7 @@ class WaitingQueueFactory(Protocol):
         self,
         fetcher: Callable[P, R],
         notification_hook: NotificaitonHook,
+        data_exists: Callable[[R], bool] = bool,
     ) -> WaitingQueue[P, R, None]:
         ...
 
@@ -74,6 +75,7 @@ class WaitingQueueFactory(Protocol):
         fetcher: Callable[P, R],
         notification_hook: NotificaitonHook,
         default_value: D,
+        data_exists: Callable[[R], bool] = bool,
     ) -> WaitingQueue[P, R, D]:
         ...
 
@@ -83,5 +85,6 @@ class WaitingQueueFactory(Protocol):
         fetcher: Callable[P, R],
         notification_hook: NotificaitonHook,
         default_factory: Callable[[], D],
+        data_exists: Callable[[R], bool] = bool,
     ) -> WaitingQueue[P, R, D]:
         ...
