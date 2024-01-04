@@ -3,7 +3,12 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from .waiting_queue import NotificaitonHook, ReceiveFuture, WaitingQueue
+from .waiting_queue import (
+    NotificaitonHook,
+    ReceiveFuture,
+    WaitingQueue,
+    WaitingQueueFactory,
+)
 
 
 class ReceiveProxy[**P, R, D](ReceiveFuture[R | D]):
@@ -42,8 +47,9 @@ class SimpleWaitingQueue[**P, R, D](WaitingQueue[P, R, D]):
         fetcher: Callable[P, R],
         notification_hook: NotificaitonHook,
         default_factory: Callable[[], D],
+        data_exists: Callable[[R], bool] = bool,
     ) -> None:
-        super().__init__(fetcher, notification_hook, default_factory)
+        super().__init__(fetcher, notification_hook, default_factory, data_exists)
 
         self._lock = threading.Lock()
         self._waiting_queue = deque[ReceiveProxy[P, R, D]]()
@@ -112,3 +118,20 @@ class SimpleWaitingQueue[**P, R, D](WaitingQueue[P, R, D]):
             proxy = self._waiting_queue[0]
             proxy.notified = True
             proxy.event.set()
+
+
+class SimpleWaitingQueueFactory(WaitingQueueFactory):
+    def __call__[**P, R, D](
+        self,
+        fetcher: Callable[P, R],
+        notification_hook: NotificaitonHook,
+        default_value: D | None = None,
+        default_factory: Callable[[], D] | None = None,
+        data_exists: Callable[[R], bool] = bool,
+    ) -> WaitingQueue[P, R, D | None] | WaitingQueue[P, R, None]:
+        return SimpleWaitingQueue(
+            fetcher=fetcher,
+            notification_hook=notification_hook,
+            data_exists=data_exists,
+            default_factory=default_factory or (lambda: default_value),
+        )
