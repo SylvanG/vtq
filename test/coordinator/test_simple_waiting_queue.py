@@ -219,3 +219,23 @@ class SimpleWaitingQueueTestCase(unittest.TestCase):
         self.callback()
         time.sleep(0.1)
         assert rv == [[1, 2], [3, 4]], rv
+
+    def test_data_exists(self):
+        self.waiting_queue.data_exists = lambda data: data is not None
+
+        rv = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(num=num)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(2):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        self.callback()
+        time.sleep(0.1)
+        # [] returned by the fetcher will be taken as a valid non-empty data
+        assert rv == [[], []], rv
