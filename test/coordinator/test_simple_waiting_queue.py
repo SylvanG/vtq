@@ -90,13 +90,132 @@ class SimpleWaitingQueueTestCase(unittest.TestCase):
         assert rv == [[1], [2, 3]], rv
 
     def test_notify_next(self):
-        ...
+        rv = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(num=num)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(3):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        for i in range(1, 6):
+            self.queue.put(i)
+        self.callback()
+
+        for t in threads:
+            t.join()
+
+        assert rv == [[1, 2], [3, 4], [5]], rv
 
     def test_cancel(self):
-        ...
+        rv = []
+        futures = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(num=num)
+            futures.append(fs)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(2):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        time.sleep(0.1)
+        assert rv == []
+
+        futures[0].cancel()
+
+        time.sleep(0.1)
+        # cancelled then returned default value []
+        assert rv == [[]]
+
+        for i in range(1, 6):
+            self.queue.put(i)
+        self.callback()
+
+        for t in threads:
+            t.join()
+
+        assert rv == [[], [1, 2]], rv
 
     def test_timeout(self):
-        ...
+        rv = []
+        futures = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(timeout=0.2, num=num)
+            futures.append(fs)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(2):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        time.sleep(0.1)
+        assert rv == [], rv
+
+        for t in threads:
+            t.join()
+
+        assert rv == [[], []], rv
 
     def test_empty(self):
-        ...
+        assert self.waiting_queue.empty()
+
+        rv = []
+        futures = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(num=num)
+            futures.append(fs)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(2):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        assert not self.waiting_queue.empty()
+
+        futures[0].cancel()
+        time.sleep(0.1)
+        assert rv == [[]]
+        assert not self.waiting_queue.empty()
+
+        self.queue.put(1)
+        self.callback()
+        time.sleep(0.1)
+        assert rv == [[], [1]]
+        assert self.waiting_queue.empty()
+
+    def test_notify_without_data(self):
+        rv = []
+
+        def wait(num: int = 1):
+            fs = self.waiting_queue.wait(num=num)
+            rv.append(fs.result())
+
+        threads = []
+        for i in range(2):
+            t = threading.Thread(target=wait, args=(2,))
+            t.start()
+            threads.append(t)
+
+        self.callback()
+        time.sleep(0.1)
+        assert rv == []
+
+        for i in range(1, 6):
+            self.queue.put(i)
+        self.callback()
+        time.sleep(0.1)
+        assert rv == [[1, 2], [3, 4]], rv
