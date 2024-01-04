@@ -22,7 +22,7 @@ class SimpleWaitingQueueTestCase(unittest.TestCase):
 
             return rv
 
-        self.callback: Callable = None
+        self.callback: Callable = None  # type: ignore
 
         def notification_hook(callback):
             self.callback = callback
@@ -35,7 +35,7 @@ class SimpleWaitingQueueTestCase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.queue = queue.Queue()
-        self.callback = None
+        self.callback = None  # type: ignore
 
     def test_with_exsting_data(self):
         rv = []
