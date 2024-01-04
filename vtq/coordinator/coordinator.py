@@ -146,22 +146,44 @@ class Coordinator(task_queue.TaskQueue):
         return task
 
     def block_receive(
-        self, max_number: int = 1, wait_time_seconds: float | None = None
+        self,
+        max_number: int = 1,
+        wait_time_seconds: float | None = None,
+        *,
+        exhausted: bool = True,
     ) -> ReceiveFuture[list[Task]]:
         if self._waiting_queue.empty():
-            if tasks := self._fetch(max_number):
+            if tasks := self._fetch(max_number, exhausted):
                 return SimpleReceiveFuture(tasks)
 
-        return self._waiting_queue.wait(wait_time_seconds, max_number=max_number)
+        return self._waiting_queue.wait(
+            wait_time_seconds, max_number=max_number, exhausted=exhausted
+        )
 
-    def _fetch(self, max_number: int) -> list[Task]:
-        return self._receive_mutliple(max_number)
+    def _fetch(self, max_number: int, exhausted: bool) -> list[Task]:
+        tasks = self._receive_mutliple(max_number)
+        if exhausted:
+            while len(tasks) < max_number:
+                if new := self._receive_mutliple(max_number):
+                    tasks.extend(new)
+                else:
+                    break
 
-    def receive(self, max_number: int = 1, wait_time_seconds: int = 0) -> list[Task]:
+        return tasks
+
+    def receive(
+        self,
+        max_number: int = 1,
+        wait_time_seconds: int = 0,
+        *,
+        exhausted: bool = True,
+    ) -> list[Task]:
         """Get tasks from the SQL table, then update the VQ `visible_at` status by the result from the Rate Limit."""
         if wait_time_seconds == 0:
-            return self._fetch(max_number)
-        return self.block_receive(max_number, wait_time_seconds).result()
+            return self._fetch(max_number, exhausted)
+        return self.block_receive(
+            max_number, wait_time_seconds, exhausted=exhausted
+        ).result()
 
     # ---- Receive one ---
     # TODO: modify it
