@@ -3,7 +3,6 @@ import contextlib
 import functools
 import itertools
 import logging
-import threading
 import time
 from collections.abc import Callable, Iterable
 
