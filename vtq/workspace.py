@@ -156,4 +156,4 @@ class MemoryWorkspace(DefaultWorkspace):
 
 class WorkspaceFactory(Protocol):
     def __call__(self, name: str, **kwargs) -> Workspace:
-        pass
+        ...

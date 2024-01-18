@@ -9,14 +9,14 @@ from rolecraft.broker import (
 from rolecraft.broker.broker import ReceiveFuture
 
 from .task import Task
-from .workspace import Workspace, WorkspaceFactory
+from .workspace import DefaultWorkspace, Workspace, WorkspaceFactory
 
 logger = logging.getLogger(__name__)
 
 
 class Broker(BaseBroker):
-    def __init__(self, workspace_factory: WorkspaceFactory) -> None:
-        self._workspace_factory = workspace_factory
+    def __init__(self, workspace_factory: WorkspaceFactory | None = None) -> None:
+        self._workspace_factory = workspace_factory or DefaultWorkspace
         self._workspaces = dict[str, Workspace]()
 
     def prepare_queue(self, queue_name: str):
