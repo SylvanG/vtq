@@ -14,8 +14,7 @@ from vtq.coordinator import common, notification_worker
 from vtq.coordinator import task as task_mod
 from vtq.coordinator.task import TaskStatus
 from vtq.task import Task, TaskMeta
-
-from .waiting_queue import ReceiveFuture, SimpleReceiveFuture, WaitingQueueFactory
+from vtq.waiting_queue import ReceiveFuture, SimpleReceiveFuture, WaitingQueueFactory
 
 logger = logging.getLogger(name=__name__)
 

@@ -1,32 +1,8 @@
-import abc
 import typing
-from abc import abstractmethod
 from collections.abc import Callable
 from typing import Protocol
 
-
-class ReceiveFuture[R](abc.ABC):
-    @abstractmethod
-    def result(self) -> R:
-        raise NotImplementedError
-
-    @abstractmethod
-    def cancel(self) -> None:
-        raise NotImplementedError
-
-    def __hash__(self) -> int:
-        return id(self)
-
-
-class SimpleReceiveFuture[R](ReceiveFuture[R]):
-    def __init__(self, result: R) -> None:
-        self._result = result
-
-    def result(self) -> R:
-        return self._result
-
-    def cancel(self) -> None:
-        return
+from .receive_future import ReceiveFuture
 
 
 class NotificaitonHook(Protocol):

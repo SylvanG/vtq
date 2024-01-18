@@ -4,7 +4,7 @@ import time
 import unittest
 from collections.abc import Callable
 
-from vtq.coordinator import simple_waiting_queue
+from vtq.waiting_queue import simple_waiting_queue
 
 
 class SimpleWaitingQueueTestCase(unittest.TestCase):
