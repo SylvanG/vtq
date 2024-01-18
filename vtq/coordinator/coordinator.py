@@ -16,6 +16,8 @@ from vtq.coordinator.task import TaskStatus
 from vtq.task import Task, TaskMeta
 from vtq.waiting_queue import ReceiveFuture, SimpleReceiveFuture, WaitingQueueFactory
 
+from . import cache_util as _cache_util
+
 logger = logging.getLogger(name=__name__)
 
 _INVISIBLE_TIMESTAMP_SECONDS = 2**31 - 1
@@ -52,15 +54,8 @@ class Coordinator(task_queue.TaskQueue):
         self.rate_limit_expose_vqueue_error_handler: Callable | None = None
         self.rate_limit_acquire_error_handler: Callable[[], bool] | None = None
 
-        self._receive_lock = threading.Lock()
-        self._available_task_event = threading.Event()
         self._task_notification_worker = task_notification_worker
-
-        self._waiting_queue = waiting_queue_factory(
-            self._fetch,
-            task_notification_worker.connect_to_available_task,
-            default_factory=list,
-        )  # FIXME: lazy start notification worker? add a start method
+        self._waiting_queue_factory = waiting_queue_factory
 
     @property
     def _support_select_for_update(self) -> bool:
@@ -140,6 +135,15 @@ class Coordinator(task_queue.TaskQueue):
                 visible_at=visible_at,
             )
         return task
+
+    @property
+    @_cache_util.cached_method
+    def _waiting_queue(self):
+        return self._waiting_queue_factory(
+            self._fetch,
+            self._task_notification_worker.connect_to_available_task,
+            default_factory=list,
+        )  # FIXME: lazy start notification worker? add a start method
 
     def block_receive(
         self,
