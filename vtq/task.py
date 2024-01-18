@@ -5,6 +5,9 @@ import dataclasses
 class TaskMeta:
     retries: int
 
+    def to_dict(self) -> dict[str, int | float | str]:
+        return dataclasses.asdict(self)
+
 
 @dataclasses.dataclass
 class Task:
