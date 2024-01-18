@@ -5,7 +5,9 @@ from typing import Protocol
 import peewee
 
 from vtq import channel, configuration, coordinator, model
-from vtq.coordinator import notification_worker, simple_waiting_queue
+from vtq.coordinator import Coordinator, notification_worker
+from vtq.coordinator.notification_worker import NotificationWorker
+from vtq.waiting_queue import simple_waiting_queue
 
 
 class Workspace(abc.ABC):
@@ -39,12 +41,12 @@ class Workspace(abc.ABC):
 
     @property
     @abstractmethod
-    def notification_worker(self) -> notification_worker.NotificationWorker:
+    def notification_worker(self) -> NotificationWorker:
         pass
 
     @property
     @abstractmethod
-    def coordinator(self) -> coordinator.Coordinator:
+    def coordinator(self) -> Coordinator:
         pass
 
 
