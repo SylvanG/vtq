@@ -18,7 +18,7 @@ class Workspace(abc.ABC):
         pass
 
     @abstractmethod
-    def init(self):
+    def init(self, *, ensure: bool = False):
         """Do all the initialization work in the workspace"""
 
     @abstractmethod
@@ -63,15 +63,16 @@ class DefaultWorkspace(Workspace):
         self._notificaiton_worker = notificaiton_worker
         self._coordinator = None
 
-    def init(self):
+    def init(self, *, ensure: bool = False):
         """Do all the initialization work, such as table creation in the workspace"""
-        cls_factory = self.model_cls_factory
-        vq_cls = cls_factory.generate_virtual_queue_cls()
-        task_cls = cls_factory.generate_task_cls(vq_cls)
-        task_error_cls = cls_factory.generate_task_error_cls(task_cls)
+        if ensure:
+            cls_factory = self.model_cls_factory
+            vq_cls = cls_factory.generate_virtual_queue_cls()
+            task_cls = cls_factory.generate_task_cls(vq_cls)
+            task_error_cls = cls_factory.generate_task_error_cls(task_cls)
 
-        with self.database:
-            self.database.create_tables([vq_cls, task_cls, task_error_cls])
+            with self.database:
+                self.database.create_tables([vq_cls, task_cls, task_error_cls])
 
         # init coordinator
         self.coordinator

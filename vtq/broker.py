@@ -19,10 +19,10 @@ class Broker(BaseBroker):
         self._workspace_factory = workspace_factory or DefaultWorkspace
         self._workspaces = dict[str, Workspace]()
 
-    def prepare_queue(self, queue_name: str):
+    def prepare_queue(self, queue_name: str, *, ensure: bool = False):
         if queue_name not in self._workspaces:
             ws = self._workspace_factory(queue_name)
-            ws.init()
+            ws.init(ensure=ensure)
             self._workspaces[queue_name] = ws
 
     def close(self):
@@ -30,13 +30,9 @@ class Broker(BaseBroker):
         for ws in self._workspaces.values():
             ws.close()
 
-    def _get_workspace(
-        self, queue_name: str, auto_create_queue: bool = False
-    ) -> Workspace:
+    def _get_workspace(self, queue_name: str) -> Workspace:
         ws = self._workspaces.get(queue_name)
         if not ws:
-            if not auto_create_queue:
-                raise QueueNotFound
             self.prepare_queue(queue_name)
             ws = self._workspaces[queue_name]
         return ws
@@ -49,7 +45,8 @@ class Broker(BaseBroker):
         auto_create_queue: bool = False,
         **kwargs,
     ) -> str:
-        ws = self._get_workspace(queue_name, auto_create_queue)
+        # TODO: implement auto_create_queue
+        ws = self._get_workspace(queue_name)
 
         # TODO: handle meta data and retrie
         return ws.coordinator.enqueue(message.data, **kwargs)
@@ -59,10 +56,9 @@ class Broker(BaseBroker):
         queue_name: str,
         *,
         header_keys: list[str] | None = None,
-        auto_create_queue: bool = False,
         **kwargs,
     ) -> ReceiveFuture[list[HeaderBytesRawMessage]]:
-        ws = self._get_workspace(queue_name, auto_create_queue)
+        ws = self._get_workspace(queue_name)
 
         return ws.coordinator.block_receive(**kwargs).transform(
             lambda tasks: [self._task_to_msg(t, header_keys) for t in tasks]
@@ -74,10 +70,9 @@ class Broker(BaseBroker):
         *,
         max_number: int = 1,
         header_keys: list[str] | None = None,
-        auto_create_queue: bool = False,
         **kwargs,
     ) -> list[HeaderBytesRawMessage]:
-        ws = self._get_workspace(queue_name, auto_create_queue)
+        ws = self._get_workspace(queue_name)
         return [
             self._task_to_msg(t, header_keys)
             for t in ws.coordinator.receive(max_number, wait_time_seconds=0, **kwargs)
