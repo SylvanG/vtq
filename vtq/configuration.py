@@ -108,6 +108,12 @@ class ConfigurationFetcher:
         """used when adding a new task to the table to specify such as"""
         return VQueueConfiguration()
 
-    def rate_limit_for(self, vqueue_name: str = "") -> RateLimit:
+    def rate_limit_for(self, vqueue_name: str = "") -> RateLimit | None:
         if self._rate_limiter_config_factory:
             return self._rate_limiter_config_factory(vqueue_name)
+
+    def rate_limit_type_str_for(self, vqueue_name: str = "") -> str:
+        rate_limit = self.rate_limit_for(vqueue_name)
+        if rate_limit:
+            return rate_limit.type.name
+        return ""

@@ -120,12 +120,14 @@ class Coordinator(task_queue.TaskQueue):
     ) -> model.Task:
         with self._db.atomic():
             vq_config = self._config_fetcher.configuration_for(vqueue_name)
+            rate_limit_type = self._config_fetcher.rate_limit_type_str_for(vqueue_name)
             self._vq_cls.insert(
                 name=vqueue_name,
                 priority=vq_config.priority,
                 bucket_name=vq_config.bucket.name,
                 bucket_weight=vq_config.bucket.weight,
                 visibility_timeout=vq_config.visibility_timeout_seconds,
+                rate_limit_type=rate_limit_type,
             ).execute()
             task: model.Task = self._task_cls.create(
                 data=task_data,
