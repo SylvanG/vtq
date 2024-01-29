@@ -1,4 +1,5 @@
 import logging
+import traceback
 
 from rolecraft.broker import (
     BaseBroker,
@@ -106,7 +107,8 @@ class Broker(BaseBroker):
         exception: Exception,
     ):
         ws = self._get_workspace(queue_name)
-        if not ws.coordinator.nack(message.id, error_message=str(exception)):
+        error_message = "".join(traceback.format_exception(exception))
+        if not ws.coordinator.nack(message.id, error_message=error_message):
             # TODO: distinguash RecoverableError and IrrecoverableError
             raise IrrecoverableError(f"NAck failed for {message.id}", message)
 
