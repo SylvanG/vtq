@@ -63,6 +63,7 @@ class Task(BaseModel):
 class TaskError(BaseModel):
     task = peewee.ForeignKeyField(Task, backref="errors")
     happened_at = CurrrentMilliTimeStampField()
+    # https://github.com/coleifer/peewee/issues/1818
     err_msg = peewee.CharField(max_length=80 * 100)
     retry_count = peewee.SmallIntegerField()
 
