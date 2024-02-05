@@ -6,8 +6,8 @@ from rolecraft.broker import (
     HeaderBytesRawMessage,
     IrrecoverableError,
     QueueNotFound,
+    ReceiveFuture,
 )
-from rolecraft.broker.broker import ReceiveFuture
 
 from .task import Task
 from .workspace import DefaultWorkspace, Workspace, WorkspaceFactory
