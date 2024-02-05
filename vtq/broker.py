@@ -125,11 +125,11 @@ class Broker(BaseBroker):
         *,
         delay_millis: int = 0,
         exception: Exception | None = None,
-    ) -> HeaderBytesRawMessage:
+    ) -> str:
         ws = self._get_workspace(queue_name)
         if not ws.coordinator.retry(
             message.id, delay_millis=delay_millis, error_message=str(exception)
         ):
             # TODO: distinguash RecoverableError and IrrecoverableError
             raise IrrecoverableError(f"Retry failed for {message.id}", message)
-        return message
+        return message.id
